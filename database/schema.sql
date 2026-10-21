@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS customers (
     id INTEGER PRIMARY KEY,
     code TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
+    email TEXT,
     phone TEXT,
     address TEXT,
     notes TEXT,
@@ -22,6 +23,7 @@ CREATE TABLE IF NOT EXISTS suppliers (
     id INTEGER PRIMARY KEY,
     code TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
+    email TEXT,
     phone TEXT,
     address TEXT,
     notes TEXT,
@@ -83,28 +85,66 @@ CREATE TABLE IF NOT EXISTS stock_movements (
 );
 CREATE INDEX IF NOT EXISTS idx_stock_movements_product_warehouse ON stock_movements(product_id, warehouse_id, created_at);
 
-CREATE TABLE IF NOT EXISTS sales (
+CREATE TABLE IF NOT EXISTS purchase_invoices (
     id INTEGER PRIMARY KEY,
     invoice_no TEXT NOT NULL UNIQUE,
-    customer_id INTEGER REFERENCES customers(id),
-    invoice_date TEXT NOT NULL DEFAULT (datetime('now')),
+    supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+    invoice_date TEXT NOT NULL,
     subtotal_minor INTEGER NOT NULL DEFAULT 0 CHECK (subtotal_minor >= 0),
     discount_minor INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
     total_minor INTEGER NOT NULL DEFAULT 0 CHECK (total_minor >= 0),
-    paid_minor INTEGER NOT NULL DEFAULT 0 CHECK (paid_minor >= 0),
     notes TEXT,
-    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'posted', 'cancelled')),
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted','cancelled')),
+    created_by INTEGER,
+    created_by_username TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    posted_at TEXT,
+    cancelled_at TEXT
 );
-CREATE TABLE IF NOT EXISTS sale_items (
+CREATE INDEX IF NOT EXISTS idx_purchase_invoices_date ON purchase_invoices(invoice_date, id DESC);
+CREATE TABLE IF NOT EXISTS purchase_invoice_items (
     id INTEGER PRIMARY KEY,
-    sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+    purchase_invoice_id INTEGER NOT NULL REFERENCES purchase_invoices(id) ON DELETE CASCADE,
     product_id INTEGER NOT NULL REFERENCES products(id),
+    unit TEXT NOT NULL DEFAULT 'قطعة',
     quantity_milli INTEGER NOT NULL CHECK (quantity_milli > 0),
     unit_price_minor INTEGER NOT NULL CHECK (unit_price_minor >= 0),
     discount_minor INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
     line_total_minor INTEGER NOT NULL CHECK (line_total_minor >= 0)
 );
+CREATE INDEX IF NOT EXISTS idx_purchase_invoice_items_invoice ON purchase_invoice_items(purchase_invoice_id);
+
+CREATE TABLE IF NOT EXISTS sales (
+    id INTEGER PRIMARY KEY,
+    invoice_no TEXT NOT NULL UNIQUE,
+    customer_id INTEGER REFERENCES customers(id),
+    invoice_date TEXT NOT NULL DEFAULT (date('now')),
+    subtotal_minor INTEGER NOT NULL DEFAULT 0 CHECK (subtotal_minor >= 0),
+    discount_minor INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
+    total_minor INTEGER NOT NULL DEFAULT 0 CHECK (total_minor >= 0),
+    paid_minor INTEGER NOT NULL DEFAULT 0 CHECK (paid_minor >= 0),
+    notes TEXT,
+    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted','cancelled')),
+    created_by INTEGER,
+    created_by_username TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    posted_at TEXT,
+    cancelled_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(invoice_date, id DESC);
+CREATE TABLE IF NOT EXISTS sale_items (
+    id INTEGER PRIMARY KEY,
+    sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+    product_id INTEGER NOT NULL REFERENCES products(id),
+    unit TEXT NOT NULL DEFAULT 'قطعة',
+    quantity_milli INTEGER NOT NULL CHECK (quantity_milli > 0),
+    unit_price_minor INTEGER NOT NULL CHECK (unit_price_minor >= 0),
+    discount_minor INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
+    line_total_minor INTEGER NOT NULL CHECK (line_total_minor >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_sale_items_invoice ON sale_items(sale_id);
 
 CREATE TABLE IF NOT EXISTS roles (id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, is_system INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS permissions (code TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '');
@@ -119,7 +159,7 @@ INSERT OR IGNORE INTO warehouses(code,name) VALUES ('MAIN', 'المخزن الر
 
 INSERT OR IGNORE INTO app_settings(key, value) VALUES
 ('app_name', 'مدار'),
-('database_schema_version', '7'),
+('database_schema_version', '8'),
 ('barcode_prefix', 'MAD'),
 ('barcode_auto_generate', 'true'),
 ('backup_reminder_enabled', 'true');

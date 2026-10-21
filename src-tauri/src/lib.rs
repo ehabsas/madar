@@ -3,7 +3,7 @@ use argon2::{
     Argon2,
 };
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf, sync::Mutex, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{Manager, State};
 
@@ -84,6 +84,22 @@ fn initialize_database(path: &PathBuf) -> Result<(), String> {
             allowed INTEGER NOT NULL CHECK (allowed IN (0,1)),
             PRIMARY KEY(user_id, permission_code)
         );
+        CREATE TABLE IF NOT EXISTS customers (
+            id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+            email TEXT, phone TEXT, address TEXT, notes TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(name);
+        CREATE TABLE IF NOT EXISTS suppliers (
+            id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+            email TEXT, phone TEXT, address TEXT, notes TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_suppliers_name ON suppliers(name);
         CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_audit_log_filters ON audit_log(entity_type, action, id DESC);
         CREATE TABLE IF NOT EXISTS warehouses (
@@ -104,10 +120,49 @@ fn initialize_database(path: &PathBuf) -> Result<(), String> {
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
         CREATE INDEX IF NOT EXISTS idx_stock_movements_product_warehouse ON stock_movements(product_id, warehouse_id, created_at);
+        CREATE TABLE IF NOT EXISTS purchase_invoices (
+            id INTEGER PRIMARY KEY, invoice_no TEXT NOT NULL UNIQUE,
+            supplier_id INTEGER NOT NULL REFERENCES suppliers(id), invoice_date TEXT NOT NULL,
+            subtotal_minor INTEGER NOT NULL DEFAULT 0 CHECK (subtotal_minor >= 0),
+            discount_minor INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
+            total_minor INTEGER NOT NULL DEFAULT 0 CHECK (total_minor >= 0), notes TEXT,
+            status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted','cancelled')),
+            created_by INTEGER, created_by_username TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')), posted_at TEXT, cancelled_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_purchase_invoices_date ON purchase_invoices(invoice_date, id DESC);
+        CREATE TABLE IF NOT EXISTS purchase_invoice_items (
+            id INTEGER PRIMARY KEY,
+            purchase_invoice_id INTEGER NOT NULL REFERENCES purchase_invoices(id) ON DELETE CASCADE,
+            product_id INTEGER NOT NULL REFERENCES products(id), unit TEXT NOT NULL DEFAULT 'قطعة', quantity_milli INTEGER NOT NULL CHECK (quantity_milli > 0),
+            unit_price_minor INTEGER NOT NULL CHECK (unit_price_minor >= 0),
+            discount_minor INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
+            line_total_minor INTEGER NOT NULL CHECK (line_total_minor >= 0)
+        );
+        CREATE INDEX IF NOT EXISTS idx_purchase_invoice_items_invoice ON purchase_invoice_items(purchase_invoice_id);
+        CREATE TABLE IF NOT EXISTS sales (
+            id INTEGER PRIMARY KEY, invoice_no TEXT NOT NULL UNIQUE,
+            customer_id INTEGER REFERENCES customers(id), invoice_date TEXT NOT NULL,
+            subtotal_minor INTEGER NOT NULL DEFAULT 0 CHECK (subtotal_minor >= 0),
+            discount_minor INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
+            total_minor INTEGER NOT NULL DEFAULT 0 CHECK (total_minor >= 0), paid_minor INTEGER NOT NULL DEFAULT 0 CHECK (paid_minor >= 0),
+            notes TEXT, status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted','cancelled')),
+            created_by INTEGER, created_by_username TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')), posted_at TEXT, cancelled_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(invoice_date, id DESC);
+        CREATE TABLE IF NOT EXISTS sale_items (
+            id INTEGER PRIMARY KEY, sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+            product_id INTEGER NOT NULL REFERENCES products(id), unit TEXT NOT NULL DEFAULT 'قطعة', quantity_milli INTEGER NOT NULL CHECK (quantity_milli > 0),
+            unit_price_minor INTEGER NOT NULL CHECK (unit_price_minor >= 0),
+            discount_minor INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
+            line_total_minor INTEGER NOT NULL CHECK (line_total_minor >= 0)
+        );
+        CREATE INDEX IF NOT EXISTS idx_sale_items_invoice ON sale_items(sale_id);
         INSERT OR IGNORE INTO warehouses(code,name) VALUES ('MAIN','المخزن الرئيسي');
         INSERT OR IGNORE INTO app_settings(key,value) VALUES ('app_name','مدار');
-        INSERT OR IGNORE INTO app_settings(key,value) VALUES ('database_schema_version','7');
-        UPDATE app_settings SET value='7', updated_at=datetime('now') WHERE key='database_schema_version' AND value IN ('1','2','3','4','5','6');
+        INSERT OR IGNORE INTO app_settings(key,value) VALUES ('database_schema_version','8');
+        UPDATE app_settings SET value='8', updated_at=datetime('now') WHERE key='database_schema_version' AND value IN ('1','2','3','4','5','6','7');
         INSERT OR IGNORE INTO app_settings(key,value) VALUES ('barcode_prefix','MAD');
         INSERT OR IGNORE INTO app_settings(key,value) VALUES ('barcode_auto_generate','true');"
     ).map_err(|e| e.to_string())?;
@@ -135,6 +190,30 @@ fn initialize_database(path: &PathBuf) -> Result<(), String> {
         if !table_has_column(&conn, "users", column)? {
             conn.execute(&format!("ALTER TABLE users ADD COLUMN {column} {declaration}"), []).map_err(|e| e.to_string())?;
         }
+    }
+
+    // Additive migration for customer/supplier contact fields and invoice lifecycle metadata.
+    for table in ["customers", "suppliers"] {
+        if !table_has_column(&conn, table, "email")? {
+            conn.execute(&format!("ALTER TABLE {table} ADD COLUMN email TEXT"), []).map_err(|e| e.to_string())?;
+        }
+        if !table_has_column(&conn, table, "notes")? {
+            conn.execute(&format!("ALTER TABLE {table} ADD COLUMN notes TEXT"), []).map_err(|e| e.to_string())?;
+        }
+    }
+    for table in ["purchase_invoices", "sales"] {
+        for (column, declaration) in [("created_by", "INTEGER"), ("created_by_username", "TEXT"), ("updated_at", "TEXT"), ("posted_at", "TEXT"), ("cancelled_at", "TEXT")] {
+            if !table_has_column(&conn, table, column)? {
+                conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {declaration}"), []).map_err(|e| e.to_string())?;
+            }
+        }
+        conn.execute(&format!("UPDATE {table} SET updated_at=COALESCE(updated_at,created_at,datetime('now')) WHERE updated_at IS NULL OR trim(updated_at)=''"), []).map_err(|e| e.to_string())?;
+    }
+    for table in ["purchase_invoice_items", "sale_items"] {
+        if !table_has_column(&conn, table, "unit")? {
+            conn.execute(&format!("ALTER TABLE {table} ADD COLUMN unit TEXT"), []).map_err(|e| e.to_string())?;
+        }
+        conn.execute(&format!("UPDATE {table} SET unit=(SELECT p.unit FROM products p WHERE p.id={table}.product_id) WHERE unit IS NULL OR trim(unit)=''"), []).map_err(|e| e.to_string())?;
     }
 
     // Additive migration for databases created before user attribution was introduced.
@@ -192,6 +271,25 @@ fn seed_access_control(conn: &Connection) -> Result<(), String> {
         ("users.role.manage", "تغيير أدوار المستخدمين", "تغيير دور المستخدم"),
         ("users.permissions.manage", "تخصيص صلاحيات المستخدم", "ضبط الصلاحيات الفردية لكل مستخدم؛ لمدير النظام فقط"),
         ("users.password.reset", "إعادة تعيين كلمة المرور", "تعيين كلمة مرور جديدة لمستخدم آخر"),
+        ("customers.view", "عرض العملاء", "عرض والبحث في سجل العملاء"),
+        ("customers.create", "إضافة عميل", "إنشاء سجل عميل جديد"),
+        ("customers.edit", "تعديل بيانات العميل", "تعديل بيانات الاتصال والعنوان والملاحظات"),
+        ("customers.status.manage", "إيقاف وتفعيل العملاء", "إيقاف العميل من الاستخدام الجديد أو إعادة تفعيله"),
+        ("suppliers.view", "عرض الموردين", "عرض والبحث في سجل الموردين"),
+        ("suppliers.create", "إضافة مورد", "إنشاء سجل مورد جديد"),
+        ("suppliers.edit", "تعديل بيانات المورد", "تعديل بيانات الاتصال والعنوان والملاحظات"),
+        ("suppliers.status.manage", "إيقاف وتفعيل الموردين", "إيقاف المورد من الاستخدام الجديد أو إعادة تفعيله"),
+        ("purchases.view", "عرض فواتير المشتريات", "عرض تفاصيل فواتير الشراء وحالاتها"),
+        ("purchases.create", "إنشاء فاتورة مشتريات", "حفظ فاتورة مشتريات كمسودة"),
+        ("purchases.edit_draft", "تعديل مسودة مشتريات", "تعديل فواتير المشتريات قبل اعتمادها فقط"),
+        ("purchases.post", "اعتماد فاتورة مشتريات", "اعتماد فاتورة مشتريات وإضافة الكميات للمخزون"),
+        ("purchases.cancel", "إلغاء فاتورة مشتريات", "إلغاء المسودة أو عكس أثر فاتورة معتمدة بأمان"),
+        ("sales.view", "عرض فواتير المبيعات", "عرض تفاصيل فواتير البيع وحالاتها"),
+        ("sales.create", "إنشاء فاتورة مبيعات", "حفظ فاتورة مبيعات كمسودة"),
+        ("sales.edit_draft", "تعديل مسودة مبيعات", "تعديل فواتير المبيعات قبل اعتمادها فقط"),
+        ("sales.post", "اعتماد فاتورة مبيعات", "اعتماد فاتورة بيع وخصم الكميات من المخزون"),
+        ("sales.cancel", "إلغاء فاتورة مبيعات", "إلغاء المسودة أو عكس أثر فاتورة معتمدة بأمان"),
+        ("sales.price.override", "تجاوز سعر البيع", "تغيير سعر البيع داخل الفاتورة عن السعر المسجل للصنف"),
     ];
     for (code, name, description) in permissions {
         conn.execute("INSERT OR IGNORE INTO permissions(code,name,description) VALUES (?1,?2,?3)", params![code,name,description]).map_err(|e| e.to_string())?;
@@ -212,10 +310,10 @@ fn seed_access_control(conn: &Connection) -> Result<(), String> {
         }
     }
     // Detailed permission defaults; insert-only so existing user/custom overrides are never overwritten.
-    let admin_detailed = ["products.view","products.create","products.edit","products.deactivate","products.reactivate","products.barcode.manage","products.purchase_price.edit","products.sale_price.edit","stock.view","stock.movement.record","backup.view_points","backup.create","backup.restore","backup.points.delete","users.view","users.profile.edit","users.create","users.status.manage","users.role.manage","users.permissions.manage","users.password.reset","audit.view"];
-    let manager_detailed = ["products.view","products.create","products.edit","products.deactivate","products.reactivate","products.barcode.manage","products.purchase_price.edit","products.sale_price.edit","stock.view","stock.movement.record","backup.view_points","backup.create","backup.restore","backup.points.delete","audit.view"];
-    let warehouse_detailed = ["products.view","stock.view","stock.movement.record"];
-    let sales_detailed = ["products.view","stock.view"];
+    let admin_detailed = ["products.view","products.create","products.edit","products.deactivate","products.reactivate","products.barcode.manage","products.purchase_price.edit","products.sale_price.edit","stock.view","stock.movement.record","backup.view_points","backup.create","backup.restore","backup.points.delete","users.view","users.profile.edit","users.create","users.status.manage","users.role.manage","users.permissions.manage","users.password.reset","audit.view","customers.view","customers.create","customers.edit","customers.status.manage","suppliers.view","suppliers.create","suppliers.edit","suppliers.status.manage","purchases.view","purchases.create","purchases.edit_draft","purchases.post","purchases.cancel","sales.view","sales.create","sales.edit_draft","sales.post","sales.cancel","sales.price.override"];
+    let manager_detailed = ["products.view","products.create","products.edit","products.deactivate","products.reactivate","products.barcode.manage","products.purchase_price.edit","products.sale_price.edit","stock.view","stock.movement.record","backup.view_points","backup.create","backup.restore","backup.points.delete","audit.view","customers.view","customers.create","customers.edit","customers.status.manage","suppliers.view","suppliers.create","suppliers.edit","suppliers.status.manage","purchases.view","purchases.create","purchases.edit_draft","purchases.post","purchases.cancel","sales.view","sales.create","sales.edit_draft","sales.post","sales.cancel","sales.price.override"];
+    let warehouse_detailed = ["products.view","stock.view","stock.movement.record","suppliers.view","purchases.view"];
+    let sales_detailed = ["products.view","stock.view","customers.view","customers.create","sales.view","sales.create","sales.edit_draft","sales.post"];
     let viewer_detailed = ["products.view","stock.view"];
     let detailed_matrices: [(&str, &[&str]); 5] = [("admin", &admin_detailed), ("manager", &manager_detailed), ("warehouse", &warehouse_detailed), ("sales", &sales_detailed), ("viewer", &viewer_detailed)];
     for (role, items) in detailed_matrices {
@@ -573,14 +671,23 @@ fn set_user_permissions(app: tauri::AppHandle, state: State<'_, AppState>, user_
     let mut all_codes=Vec::new(); for row in all_rows { all_codes.push(row.map_err(|e|e.to_string())?); } drop(stmt);
     if let Some(unknown)=allowed_codes.iter().find(|code|!all_codes.contains(code)) { return Err(format!("الصلاحية غير معروفة: {unknown}")); }
     if unique.contains("users.permissions.manage") { return Err("صلاحية تخصيص الصلاحيات لا يمكن منحها لمستخدم آخر؛ وهي محجوزة لمدير النظام".into()); }
-    let dependencies: [(&str, &str); 14] = [
+    let dependencies = [
         ("products.create","products.view"), ("products.edit","products.view"),
         ("products.deactivate","products.view"), ("products.reactivate","products.view"),
         ("products.barcode.manage","products.view"), ("products.purchase_price.edit","products.view"),
         ("products.sale_price.edit","products.view"), ("stock.movement.record","stock.view"),
         ("backup.points.delete","backup.view_points"), ("users.create","users.view"), ("users.profile.edit","users.view"),
-        ("users.status.manage","users.view"), ("users.role.manage","users.view"),
-        ("users.password.reset","users.view")
+        ("users.status.manage","users.view"), ("users.role.manage","users.view"), ("users.password.reset","users.view"),
+        ("customers.create","customers.view"), ("customers.edit","customers.view"), ("customers.status.manage","customers.view"),
+        ("suppliers.create","suppliers.view"), ("suppliers.edit","suppliers.view"), ("suppliers.status.manage","suppliers.view"),
+        ("purchases.create","purchases.view"), ("purchases.post","purchases.view"), ("purchases.cancel","purchases.view"),
+        ("sales.create","sales.view"), ("sales.post","sales.view"), ("sales.cancel","sales.view"),
+        ("purchases.create","products.view"), ("purchases.create","suppliers.view"),
+        ("purchases.post","purchases.create"), ("sales.create","products.view"),
+        ("sales.create","customers.view"), ("sales.post","sales.create"),
+        ("purchases.edit_draft","purchases.view"), ("purchases.edit_draft","purchases.create"),
+        ("sales.edit_draft","sales.view"), ("sales.edit_draft","sales.create"),
+        ("sales.price.override","sales.create")
     ];
     for (permission, required) in dependencies {
         if unique.contains(permission) && !unique.contains(required) {
@@ -776,6 +883,13 @@ fn update_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, co
     if purchase_price_minor != current_purchase_price && !actor.permissions.iter().any(|p| p == "products.purchase_price.edit") { return Err("ليس لديك صلاحية تعديل سعر الشراء".into()); }
     if sale_price_minor != current_sale_price && !actor.permissions.iter().any(|p| p == "products.sale_price.edit") { return Err("ليس لديك صلاحية تعديل سعر البيع".into()); }
     if current_unit != unit {
+        let draft_refs: i64 = tx.query_row(
+            "SELECT (SELECT COUNT(*) FROM purchase_invoice_items li JOIN purchase_invoices h ON h.id=li.purchase_invoice_id WHERE li.product_id=?1 AND h.status='draft') + (SELECT COUNT(*) FROM sale_items li JOIN sales h ON h.id=li.sale_id WHERE li.product_id=?1 AND h.status='draft')",
+            [id], |r| r.get(0)
+        ).map_err(|e| e.to_string())?;
+        if draft_refs > 0 {
+            return Err("لا يمكن تغيير وحدة الصنف مع وجود فواتير مسودة تستخدمه؛ عدّل أو ألغِ المسودات أولًا.".into());
+        }
         let on_hand: i64 = tx.query_row("SELECT COALESCE(SUM(quantity_milli),0) FROM stock_movements WHERE product_id=?1", [id], |r| r.get(0)).map_err(|e| e.to_string())?;
         if on_hand != 0 {
             return Err(format!("لا يمكن تغيير وحدة الصنف إلى «{unit}» لأن له رصيدًا حاليًا. صفّر الرصيد أو عالج تحويل الوحدة أولًا حتى لا تتغير دلالة الكميات المسجلة."));
@@ -968,6 +1082,300 @@ fn record_stock_movement(
         quantity_milli as f64 / 1000.0,
         unit,
     ))
+}
+
+// Customer/supplier master data and transactional purchase/sales invoice lifecycle.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PartyRow {
+    id: i64, code: String, name: String, email: Option<String>, phone: Option<String>,
+    address: Option<String>, notes: Option<String>, is_active: bool, created_at: String,
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn list_parties(app: tauri::AppHandle, state: State<'_, AppState>, entity_type: String, query: Option<String>) -> Result<Vec<PartyRow>, String> {
+    let table = match entity_type.as_str() { "customer" => "customers", "supplier" => "suppliers", _ => return Err("نوع جهة الاتصال غير صالح".into()) };
+    let permission = if table == "customers" { "customers.view" } else { "suppliers.view" };
+    let _actor = require_permission(state.inner(), permission)?;
+    let path = database_path(&app)?; initialize_database(&path)?; let conn = connect(&path)?;
+    let q = query.unwrap_or_default(); let q = q.trim(); let like = format!("%{q}%");
+    let sql = format!("SELECT id,code,name,email,phone,address,notes,is_active,created_at FROM {table} WHERE (?1='' OR code LIKE ?2 OR name LIKE ?2 OR COALESCE(email,'') LIKE ?2 OR COALESCE(phone,'') LIKE ?2 OR COALESCE(address,'') LIKE ?2) ORDER BY is_active DESC,name COLLATE NOCASE LIMIT 1000");
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(params![q,like], |r| Ok(PartyRow { id:r.get(0)?, code:r.get(1)?, name:r.get(2)?, email:r.get(3)?, phone:r.get(4)?, address:r.get(5)?, notes:r.get(6)?, is_active:r.get::<_,i64>(7)?!=0, created_at:r.get(8)? })).map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn save_party(app: tauri::AppHandle, state: State<'_, AppState>, entity_type: String, id: Option<i64>, code: String, name: String, email: Option<String>, phone: Option<String>, address: Option<String>, notes: Option<String>) -> Result<String, String> {
+    let table = match entity_type.as_str() { "customer" => "customers", "supplier" => "suppliers", _ => return Err("نوع جهة الاتصال غير صالح".into()) };
+    let (create_perm, edit_perm) = if table == "customers" { ("customers.create","customers.edit") } else { ("suppliers.create","suppliers.edit") };
+    let actor = require_permission(state.inner(), if id.is_some() { edit_perm } else { create_perm })?;
+    let code = code.trim(); let name = name.trim();
+    if code.is_empty() || name.is_empty() { return Err("الكود والاسم حقول مطلوبة".into()); }
+    if code.chars().count() > 60 || name.chars().count() > 180 { return Err("الكود أو الاسم أطول من الحد المسموح".into()); }
+    let email = validate_profile_email(email)?;
+    let phone = clean_optional_profile(phone, "رقم الهاتف", 60)?;
+    let address = clean_optional_profile(address, "العنوان", 500)?;
+    let notes = clean_optional_profile(notes, "الملاحظات", 1500)?;
+    let path = database_path(&app)?; initialize_database(&path)?; let mut conn = connect(&path)?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    if let Some(id) = id {
+        let exists: bool = tx.query_row(&format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE id=?1)"), [id], |r| Ok(r.get::<_,i64>(0)? != 0)).map_err(|e| e.to_string())?;
+        if !exists { return Err("سجل جهة الاتصال غير موجود".into()); }
+        tx.execute(&format!("UPDATE {table} SET code=?1,name=?2,email=?3,phone=?4,address=?5,notes=?6,updated_at=datetime('now') WHERE id=?7"), params![code,name,email,phone,address,notes,id]).map_err(|e| format!("تعذر تعديل البيانات (تأكد أن الكود غير مستخدم): {e}"))?;
+        write_audit(&tx,Some(&actor),if table=="customers" {"customer_updated"} else {"supplier_updated"},table,Some(&id.to_string()),&format!("code={code}; name={name}"))?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(format!("تم تحديث البيانات: {name}"))
+    } else {
+        tx.execute(&format!("INSERT INTO {table}(code,name,email,phone,address,notes) VALUES (?1,?2,?3,?4,?5,?6)"), params![code,name,email,phone,address,notes]).map_err(|e| format!("تعذر إنشاء السجل (تأكد أن الكود غير مستخدم): {e}"))?;
+        let new_id = tx.last_insert_rowid();
+        write_audit(&tx,Some(&actor),if table=="customers" {"customer_created"} else {"supplier_created"},table,Some(&new_id.to_string()),&format!("code={code}; name={name}"))?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(format!("تمت إضافة السجل: {name}"))
+    }
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn set_party_active(app: tauri::AppHandle, state: State<'_, AppState>, entity_type: String, id: i64, active: bool) -> Result<String, String> {
+    let table = match entity_type.as_str() { "customer" => "customers", "supplier" => "suppliers", _ => return Err("نوع جهة الاتصال غير صالح".into()) };
+    let permission = if table == "customers" { "customers.status.manage" } else { "suppliers.status.manage" };
+    let actor = require_permission(state.inner(), permission)?;
+    let path = database_path(&app)?; initialize_database(&path)?; let mut conn = connect(&path)?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    let row: Option<(String,i64)> = tx.query_row(&format!("SELECT name,is_active FROM {table} WHERE id=?1"), [id], |r| Ok((r.get(0)?,r.get(1)?))).optional().map_err(|e| e.to_string())?;
+    let Some((name,current)) = row else { return Err("سجل جهة الاتصال غير موجود".into()); };
+    if (current != 0) == active { return Err("حالة جهة الاتصال لم تتغير".into()); }
+    tx.execute(&format!("UPDATE {table} SET is_active=?1,updated_at=datetime('now') WHERE id=?2"), params![if active {1} else {0},id]).map_err(|e| e.to_string())?;
+    let action = match (table,active) { ("customers",true)=>"customer_activated",("customers",false)=>"customer_deactivated",("suppliers",true)=>"supplier_activated",_=>"supplier_deactivated" };
+    write_audit(&tx,Some(&actor),action,table,Some(&id.to_string()),&format!("name={name}"))?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(format!("تم {} {}: {name}", if active {"تفعيل"} else {"إيقاف"}, if table=="customers" {"العميل"} else {"المورد"}))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InvoiceItemInput { product_id: i64, quantity_milli: i64, unit_price_minor: i64 }
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct InvoiceRow {
+    id: i64, invoice_no: String, party_name: String, invoice_date: String,
+    subtotal_minor: i64, discount_minor: i64, total_minor: i64,
+    notes: Option<String>, status: String, item_count: i64, created_by_name: Option<String>, created_at: String, party_id: Option<i64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InvoiceItemRow {
+    id: i64, product_id: i64, product_code: String, product_name: String, unit: String,
+    quantity_milli: i64, unit_price_minor: i64, line_total_minor: i64,
+}
+
+#[derive(Clone, Copy)]
+struct InvoiceContext { kind: &'static str, header: &'static str, lines: &'static str, party_table: &'static str, party_column: &'static str, prefix: &'static str, view_permission: &'static str, create_permission: &'static str, post_permission: &'static str, cancel_permission: &'static str }
+fn invoice_context(invoice_type: &str) -> Result<InvoiceContext,String> {
+    match invoice_type {
+        "purchase" => Ok(InvoiceContext { kind:"purchase",header:"purchase_invoices",lines:"purchase_invoice_items",party_table:"suppliers",party_column:"supplier_id",prefix:"PUR",view_permission:"purchases.view",create_permission:"purchases.create",post_permission:"purchases.post",cancel_permission:"purchases.cancel" }),
+        "sale" => Ok(InvoiceContext { kind:"sale",header:"sales",lines:"sale_items",party_table:"customers",party_column:"customer_id",prefix:"SAL",view_permission:"sales.view",create_permission:"sales.create",post_permission:"sales.post",cancel_permission:"sales.cancel" }),
+        _ => Err("نوع الفاتورة غير صالح".into())
+    }
+}
+fn invoice_row_from_query(conn: &Connection, ctx: InvoiceContext, invoice_id: i64) -> Result<Option<InvoiceRow>,String> {
+    let sql = format!("SELECT i.id,i.invoice_no,COALESCE(p.name,CASE WHEN i.{party_col} IS NULL THEN 'عميل نقدي' ELSE '' END),i.invoice_date,i.subtotal_minor,i.discount_minor,i.total_minor,i.notes,i.status,(SELECT COUNT(*) FROM {lines} il WHERE il.{fk}=i.id),COALESCE(i.created_by_username,u.display_name),i.created_at,i.{party_col} FROM {header} i LEFT JOIN {party} p ON p.id=i.{party_col} LEFT JOIN users u ON u.id=i.created_by WHERE i.id=?1",header=ctx.header,party=ctx.party_table,party_col=ctx.party_column,lines=ctx.lines,fk=if ctx.kind=="purchase" {"purchase_invoice_id"} else {"sale_id"});
+    conn.query_row(&sql,[invoice_id],|r|Ok(InvoiceRow{id:r.get(0)?,invoice_no:r.get(1)?,party_name:r.get(2)?,invoice_date:r.get(3)?,subtotal_minor:r.get(4)?,discount_minor:r.get(5)?,total_minor:r.get(6)?,notes:r.get(7)?,status:r.get(8)?,item_count:r.get(9)?,created_by_name:r.get(10)?,created_at:r.get(11)?,party_id:r.get(12)?})).optional().map_err(|e|e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn list_invoices(app: tauri::AppHandle, state: State<'_, AppState>, invoice_type: String, query: Option<String>) -> Result<Vec<InvoiceRow>,String> {
+    let ctx = invoice_context(&invoice_type)?; let _actor = require_permission(state.inner(),ctx.view_permission)?;
+    let path = database_path(&app)?; initialize_database(&path)?; let conn = connect(&path)?;
+    let q=query.unwrap_or_default(); let q=q.trim(); let like=format!("%{q}%");
+    let fk=if ctx.kind=="purchase" {"purchase_invoice_id"} else {"sale_id"};
+    let sql=format!("SELECT i.id,i.invoice_no,COALESCE(p.name,CASE WHEN i.{party_col} IS NULL THEN 'عميل نقدي' ELSE '' END),i.invoice_date,i.subtotal_minor,i.discount_minor,i.total_minor,i.notes,i.status,(SELECT COUNT(*) FROM {lines} il WHERE il.{fk}=i.id),COALESCE(i.created_by_username,u.display_name),i.created_at,i.{party_col} FROM {header} i LEFT JOIN {party} p ON p.id=i.{party_col} LEFT JOIN users u ON u.id=i.created_by WHERE (?1='' OR i.invoice_no LIKE ?2 OR COALESCE(p.name,'') LIKE ?2 OR COALESCE(i.notes,'') LIKE ?2) ORDER BY i.id DESC LIMIT 500",party_col=ctx.party_column,lines=ctx.lines,fk=fk,header=ctx.header,party=ctx.party_table);
+    let mut stmt=conn.prepare(&sql).map_err(|e|e.to_string())?;
+    let rows=stmt.query_map(params![q,like],|r|Ok(InvoiceRow{id:r.get(0)?,invoice_no:r.get(1)?,party_name:r.get(2)?,invoice_date:r.get(3)?,subtotal_minor:r.get(4)?,discount_minor:r.get(5)?,total_minor:r.get(6)?,notes:r.get(7)?,status:r.get(8)?,item_count:r.get(9)?,created_by_name:r.get(10)?,created_at:r.get(11)?,party_id:r.get(12)?})).map_err(|e|e.to_string())?;
+    rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn get_invoice_details(app: tauri::AppHandle, state: State<'_, AppState>, invoice_type: String, invoice_id: i64) -> Result<serde_json::Value,String> {
+    let ctx=invoice_context(&invoice_type)?;let _actor=require_permission(state.inner(),ctx.view_permission)?;
+    let path=database_path(&app)?;initialize_database(&path)?;let conn=connect(&path)?;
+    let invoice=invoice_row_from_query(&conn,ctx,invoice_id)?.ok_or("الفاتورة غير موجودة")?;
+    let fk=if ctx.kind=="purchase" {"purchase_invoice_id"} else {"sale_id"};
+    let sql=format!("SELECT il.id,il.product_id,p.code,p.name,COALESCE(il.unit,p.unit,'قطعة'),il.quantity_milli,il.unit_price_minor,il.line_total_minor FROM {lines} il JOIN products p ON p.id=il.product_id WHERE il.{fk}=?1 ORDER BY il.id",lines=ctx.lines,fk=fk);
+    let mut stmt=conn.prepare(&sql).map_err(|e|e.to_string())?;
+    let rows=stmt.query_map([invoice_id],|r|Ok(InvoiceItemRow{id:r.get(0)?,product_id:r.get(1)?,product_code:r.get(2)?,product_name:r.get(3)?,unit:r.get(4)?,quantity_milli:r.get(5)?,unit_price_minor:r.get(6)?,line_total_minor:r.get(7)?})).map_err(|e|e.to_string())?;
+    let items=rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
+    Ok(serde_json::json!({"invoice":invoice,"items":items}))
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn create_invoice(app: tauri::AppHandle, state: State<'_, AppState>, invoice_type: String, party_id: Option<i64>, invoice_date: String, discount_minor: i64, notes: Option<String>, items: Vec<InvoiceItemInput>) -> Result<InvoiceRow,String> {
+    let ctx=invoice_context(&invoice_type)?;let actor=require_permission(state.inner(),ctx.create_permission)?;
+    if !actor.permissions.iter().any(|p|p==ctx.view_permission) || !actor.permissions.iter().any(|p|p=="products.view") { return Err("إنشاء الفاتورة يتطلب صلاحية عرض الفواتير والأصناف".into()); }
+    if ctx.kind=="purchase" && !actor.permissions.iter().any(|p|p=="suppliers.view") { return Err("تحتاج صلاحية عرض الموردين لإنشاء فاتورة مشتريات".into()); }
+    if ctx.kind=="sale" && !actor.permissions.iter().any(|p|p=="customers.view") { return Err("تحتاج صلاحية عرض العملاء لإنشاء فاتورة مبيعات".into()); }
+    if items.is_empty() {return Err("أضف صنفًا واحدًا على الأقل للفاتورة".into());}
+    if items.len()>200 {return Err("لا يمكن أن تتجاوز الفاتورة 200 سطر".into());}
+    if discount_minor<0 {return Err("الخصم لا يمكن أن يكون سالبًا".into());}
+    if invoice_date.len()!=10 {return Err("تاريخ الفاتورة يجب أن يكون بصيغة YYYY-MM-DD".into());}
+    let notes=clean_optional_profile(notes,"الملاحظات",2000)?;
+    let path=database_path(&app)?;initialize_database(&path)?;let mut conn=connect(&path)?;
+    let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|e.to_string())?;
+    let normalized_date:Option<String>=tx.query_row("SELECT date(?1)",[invoice_date.trim()],|r|r.get(0)).map_err(|e|e.to_string())?;
+    if normalized_date.as_deref()!=Some(invoice_date.trim()) {return Err("تاريخ الفاتورة غير صالح".into());}
+    if ctx.kind=="purchase" {
+        let supplier_id=party_id.ok_or("اختَر المورد لفاتورة المشتريات")?;
+        let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM suppliers WHERE id=?1 AND is_active=1)",[supplier_id],|r|Ok(r.get::<_,i64>(0)?!=0)).map_err(|e|e.to_string())?;
+        if !exists {return Err("المورد غير موجود أو موقوف".into());}
+    } else if let Some(customer_id)=party_id {
+        let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM customers WHERE id=?1 AND is_active=1)",[customer_id],|r|Ok(r.get::<_,i64>(0)?!=0)).map_err(|e|e.to_string())?;
+        if !exists {return Err("العميل غير موجود أو موقوف".into());}
+    }
+    let temp_no=format!("TMP-{}-{}-{}",ctx.prefix,actor.id,SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e|e.to_string())?.as_nanos());
+    let insert_header=format!("INSERT INTO {header}(invoice_no,{party_column},invoice_date,subtotal_minor,discount_minor,total_minor,notes,status,created_by,created_by_username) VALUES (?1,?2,?3,0,?4,0,?5,'draft',?6,?7)",header=ctx.header,party_column=ctx.party_column);
+    tx.execute(&insert_header,params![temp_no,party_id,invoice_date.trim(),discount_minor,notes,actor.id,actor.display_name]).map_err(|e|e.to_string())?;
+    let id=tx.last_insert_rowid();let invoice_no=format!("{}-{:06}",ctx.prefix,id);
+    tx.execute(&format!("UPDATE {header} SET invoice_no=?1 WHERE id=?2",header=ctx.header),params![invoice_no,id]).map_err(|e|e.to_string())?;
+    let fk=if ctx.kind=="purchase" {"purchase_invoice_id"} else {"sale_id"};
+    let mut subtotal=0_i64;
+    for item in &items {
+        if item.quantity_milli<=0 {return Err("كل كمية يجب أن تكون أكبر من صفر".into());}
+        if item.unit_price_minor<0 {return Err("سعر السطر لا يمكن أن يكون سالبًا".into());}
+        let product:Option<(String,String,i64,i64,i64)>=tx.query_row("SELECT code,name,purchase_price_minor,sale_price_minor,is_active FROM products WHERE id=?1",[item.product_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional().map_err(|e|e.to_string())?;
+        let Some((_code,_name,_purchase_price,sale_price,is_active))=product else {return Err("أحد الأصناف في الفاتورة غير موجود".into());};
+        if is_active==0 {return Err("لا يمكن إدراج صنف موقوف في فاتورة جديدة".into());}
+        if ctx.kind=="sale" && item.unit_price_minor!=sale_price && !actor.permissions.iter().any(|p|p=="sales.price.override") {
+            return Err(format!("لا تملك صلاحية تجاوز سعر البيع المسجل للصنف {}",_code));
+        }
+        let numerator=item.quantity_milli.checked_mul(item.unit_price_minor).and_then(|v|v.checked_add(500)).ok_or("قيمة السطر أكبر من الحد المسموح")?;
+        let line_total=numerator/1000;
+        subtotal=subtotal.checked_add(line_total).ok_or("إجمالي الفاتورة أكبر من الحد المسموح")?;
+        let unit_price=item.unit_price_minor;
+        let insert_line=format!("INSERT INTO {lines}({fk},product_id,unit,quantity_milli,unit_price_minor,discount_minor,line_total_minor) VALUES (?1,?2,(SELECT unit FROM products WHERE id=?2),?3,?4,0,?5)",lines=ctx.lines,fk=fk);
+        tx.execute(&insert_line,params![id,item.product_id,item.quantity_milli,unit_price,line_total]).map_err(|e|e.to_string())?;
+    }
+    if discount_minor>subtotal {return Err("خصم الفاتورة لا يمكن أن يتجاوز الإجمالي".into());}
+    let total=subtotal-discount_minor;
+    tx.execute(&format!("UPDATE {header} SET subtotal_minor=?1,total_minor=?2,updated_at=datetime('now') WHERE id=?3",header=ctx.header),params![subtotal,total,id]).map_err(|e|e.to_string())?;
+    write_audit(&tx,Some(&actor),if ctx.kind=="purchase" {"purchase_invoice_created"} else {"sale_invoice_created"},if ctx.kind=="purchase" {"purchase_invoice"} else {"sale_invoice"},Some(&id.to_string()),&format!("invoice_no={invoice_no}; status=draft; items={}; total_minor={total}",items.len()))?;
+    tx.commit().map_err(|e|e.to_string())?;
+    invoice_row_from_query(&conn,ctx,id)?.ok_or("تم إنشاء الفاتورة لكن تعذر تحميلها".into())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn update_invoice_draft(app: tauri::AppHandle, state: State<'_, AppState>, invoice_type: String, invoice_id: i64, party_id: Option<i64>, invoice_date: String, discount_minor: i64, notes: Option<String>, items: Vec<InvoiceItemInput>) -> Result<InvoiceRow,String> {
+    let ctx=invoice_context(&invoice_type)?;
+    let edit_permission=if ctx.kind=="purchase" {"purchases.edit_draft"} else {"sales.edit_draft"};
+    let actor=require_permission(state.inner(),edit_permission)?;
+    if !actor.permissions.iter().any(|p|p==ctx.view_permission) || !actor.permissions.iter().any(|p|p==ctx.create_permission) {return Err("تعديل المسودة يتطلب صلاحية عرض الفواتير وإنشائها".into());}
+    if !actor.permissions.iter().any(|p|p=="products.view") {return Err("تعديل الفاتورة يتطلب صلاحية عرض الأصناف".into());}
+    if ctx.kind=="purchase" && !actor.permissions.iter().any(|p|p=="suppliers.view") {return Err("تحتاج صلاحية عرض الموردين لتعديل فاتورة مشتريات".into());}
+    if ctx.kind=="sale" && !actor.permissions.iter().any(|p|p=="customers.view") {return Err("تحتاج صلاحية عرض العملاء لتعديل فاتورة مبيعات".into());}
+    if items.is_empty() || items.len()>200 {return Err("الفاتورة يجب أن تحتوي من صنف واحد إلى 200 صنف".into());}
+    if discount_minor<0 {return Err("الخصم لا يمكن أن يكون سالبًا".into());}
+    if invoice_date.len()!=10 {return Err("تاريخ الفاتورة يجب أن يكون بصيغة YYYY-MM-DD".into());}
+    let notes=clean_optional_profile(notes,"الملاحظات",2000)?;
+    let path=database_path(&app)?;initialize_database(&path)?;let mut conn=connect(&path)?;
+    let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|e.to_string())?;
+    let invoice:Option<(String,String)>=tx.query_row(&format!("SELECT invoice_no,status FROM {header} WHERE id=?1",header=ctx.header),[invoice_id],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(|e|e.to_string())?;
+    let Some((invoice_no,status))=invoice else{return Err("الفاتورة غير موجودة".into());};
+    if status!="draft" {return Err("يمكن تعديل المسودات فقط؛ الفاتورة المعتمدة أو الملغاة لا تتغير".into());}
+    let normalized_date:Option<String>=tx.query_row("SELECT date(?1)",[invoice_date.trim()],|r|r.get(0)).map_err(|e|e.to_string())?;
+    if normalized_date.as_deref()!=Some(invoice_date.trim()) {return Err("تاريخ الفاتورة غير صالح".into());}
+    if ctx.kind=="purchase" {
+        let supplier_id=party_id.ok_or("اختَر المورد لفاتورة المشتريات")?;
+        let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM suppliers WHERE id=?1 AND is_active=1)",[supplier_id],|r|Ok(r.get::<_,i64>(0)?!=0)).map_err(|e|e.to_string())?;
+        if !exists {return Err("المورد غير موجود أو موقوف".into());}
+    } else if let Some(customer_id)=party_id {
+        let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM customers WHERE id=?1 AND is_active=1)",[customer_id],|r|Ok(r.get::<_,i64>(0)?!=0)).map_err(|e|e.to_string())?;
+        if !exists {return Err("العميل غير موجود أو موقوف".into());}
+    }
+    let fk=if ctx.kind=="purchase" {"purchase_invoice_id"} else {"sale_id"};
+    tx.execute(&format!("DELETE FROM {lines} WHERE {fk}=?1",lines=ctx.lines,fk=fk),[invoice_id]).map_err(|e|e.to_string())?;
+    let mut subtotal=0_i64;
+    for item in &items {
+        if item.quantity_milli<=0 || item.unit_price_minor<0 {return Err("راجع الكميات والأسعار في الفاتورة".into());}
+        let product:Option<(String,i64,i64,i64)>=tx.query_row("SELECT code,purchase_price_minor,sale_price_minor,is_active FROM products WHERE id=?1",[item.product_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|e|e.to_string())?;
+        let Some((code,_purchase_price,sale_price,is_active))=product else{return Err("أحد الأصناف في الفاتورة غير موجود".into());};
+        if is_active==0 {return Err(format!("الصنف {code} موقوف؛ لا يمكن حفظ فاتورة جديدة به"));}
+        if ctx.kind=="sale" && item.unit_price_minor!=sale_price && !actor.permissions.iter().any(|p|p=="sales.price.override") {return Err(format!("لا تملك صلاحية تجاوز سعر البيع المسجل للصنف {code}"));}
+        let line_total=item.quantity_milli.checked_mul(item.unit_price_minor).and_then(|v|v.checked_add(500)).ok_or("قيمة السطر أكبر من الحد المسموح")?/1000;
+        subtotal=subtotal.checked_add(line_total).ok_or("إجمالي الفاتورة أكبر من الحد المسموح")?;
+        let sql=format!("INSERT INTO {lines}({fk},product_id,unit,quantity_milli,unit_price_minor,discount_minor,line_total_minor) VALUES (?1,?2,(SELECT unit FROM products WHERE id=?2),?3,?4,0,?5)",lines=ctx.lines,fk=fk);
+        tx.execute(&sql,params![invoice_id,item.product_id,item.quantity_milli,item.unit_price_minor,line_total]).map_err(|e|e.to_string())?;
+    }
+    if discount_minor>subtotal {return Err("خصم الفاتورة لا يمكن أن يتجاوز الإجمالي".into());}
+    let update=format!("UPDATE {header} SET {party_col}=?1,invoice_date=?2,subtotal_minor=?3,discount_minor=?4,total_minor=?5,notes=?6,updated_at=datetime('now') WHERE id=?7",header=ctx.header,party_col=ctx.party_column);
+    tx.execute(&update,params![party_id,invoice_date.trim(),subtotal,discount_minor,subtotal-discount_minor,notes,invoice_id]).map_err(|e|e.to_string())?;
+    write_audit(&tx,Some(&actor),if ctx.kind=="purchase" {"purchase_invoice_updated"} else {"sale_invoice_updated"},if ctx.kind=="purchase" {"purchase_invoice"} else {"sale_invoice"},Some(&invoice_id.to_string()),&format!("invoice_no={invoice_no}; draft revised; items={}; total_minor={}",items.len(),subtotal-discount_minor))?;
+    tx.commit().map_err(|e|e.to_string())?;
+    invoice_row_from_query(&conn,ctx,invoice_id)?.ok_or("تعذر تحميل المسودة المعدلة".into())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn post_invoice(app: tauri::AppHandle, state: State<'_, AppState>, invoice_type: String, invoice_id: i64) -> Result<String,String> {
+    let ctx=invoice_context(&invoice_type)?;let actor=require_permission(state.inner(),ctx.post_permission)?;
+    if !actor.permissions.iter().any(|p|p==ctx.view_permission) { return Err("لازم تملك صلاحية عرض الفواتير قبل اعتمادها".into()); }
+    let path=database_path(&app)?;initialize_database(&path)?;let mut conn=connect(&path)?;
+    let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|e.to_string())?;
+    let invoice:Option<(String,String,Option<i64>)>=tx.query_row(&format!("SELECT invoice_no,status,{party_column} FROM {header} WHERE id=?1",header=ctx.header,party_column=ctx.party_column),[invoice_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e|e.to_string())?;
+    let Some((invoice_no,status,party_id))=invoice else{return Err("الفاتورة غير موجودة".into());};
+    if status!="draft" {return Err("يمكن اعتماد المسودات فقط؛ حالة الفاتورة الحالية لا تسمح بالاعتماد".into());}
+    if let Some(party_id)=party_id {
+        let active:bool=tx.query_row(&format!("SELECT EXISTS(SELECT 1 FROM {party_table} WHERE id=?1 AND is_active=1)",party_table=ctx.party_table),[party_id],|r|Ok(r.get::<_,i64>(0)?!=0)).map_err(|e|e.to_string())?;
+        if !active {return Err(if ctx.kind=="purchase" {"المورد المرتبط بالفاتورة موقوف؛ أعد تفعيله قبل الاعتماد".into()} else {"العميل المرتبط بالفاتورة موقوف؛ أعد تفعيله قبل الاعتماد".into()});}
+    } else if ctx.kind=="purchase" { return Err("فاتورة المشتريات تحتاج إلى مورد".into()); }
+    let warehouse_id:i64=tx.query_row("SELECT id FROM warehouses WHERE code='MAIN' AND is_active=1 LIMIT 1",[],|r|r.get(0)).map_err(|e|format!("لا يوجد مخزن رئيسي نشط: {e}"))?;
+    let fk=if ctx.kind=="purchase" {"purchase_invoice_id"} else {"sale_id"};
+    let lines_sql=format!("SELECT il.product_id,il.quantity_milli,COALESCE(il.unit,p.unit,'قطعة'),p.code,p.name,p.is_active FROM {lines} il JOIN products p ON p.id=il.product_id WHERE il.{fk}=?1 ORDER BY il.id",lines=ctx.lines,fk=fk);
+    let line_rows={let mut stmt=tx.prepare(&lines_sql).map_err(|e|e.to_string())?;let rows=stmt.query_map([invoice_id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,i64>(5)?))).map_err(|e|e.to_string())?;rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?};
+    if line_rows.is_empty(){return Err("لا يمكن اعتماد فاتورة بدون أصناف".into());}
+    for (product_id,quantity,unit,code,name,is_active) in line_rows {
+        if is_active==0 {return Err(format!("الصنف {code} ({name}) موقوف؛ أعد تفعيله قبل اعتماد الفاتورة"));}
+        let signed=if ctx.kind=="purchase" {quantity} else {-quantity};
+        if ctx.kind=="sale" {
+            let balance:i64=tx.query_row("SELECT COALESCE(SUM(quantity_milli),0) FROM stock_movements WHERE product_id=?1 AND warehouse_id=?2",params![product_id,warehouse_id],|r|r.get(0)).map_err(|e|e.to_string())?;
+            if balance<quantity {return Err(format!("الرصيد غير كافٍ للصنف {code} ({name}). المتاح {} والمطلوب {}",balance as f64/1000.0,quantity as f64/1000.0));}
+        }
+        tx.execute("INSERT INTO stock_movements(product_id,warehouse_id,movement_type,quantity_milli,reference_type,reference_id,notes,unit) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",params![product_id,warehouse_id,ctx.kind,signed,if ctx.kind=="purchase" {"purchase_invoice"} else {"sale_invoice"},invoice_id,format!("{} — {}",invoice_no,if ctx.kind=="purchase" {"اعتماد فاتورة مشتريات"} else {"اعتماد فاتورة مبيعات"}),unit]).map_err(|e|e.to_string())?;
+        write_audit(&tx,Some(&actor),if ctx.kind=="purchase" {"stock_in"} else {"stock_out"},"stock",Some(&product_id.to_string()),&format!("source=invoice; invoice_no={invoice_no}; code={code}; name={name}; quantity_milli={quantity}; unit={unit}"))?;
+    }
+    tx.execute(&format!("UPDATE {header} SET status='posted',posted_at=datetime('now'),updated_at=datetime('now') WHERE id=?1",header=ctx.header),[invoice_id]).map_err(|e|e.to_string())?;
+    write_audit(&tx,Some(&actor),if ctx.kind=="purchase" {"purchase_invoice_posted"} else {"sale_invoice_posted"},if ctx.kind=="purchase" {"purchase_invoice"} else {"sale_invoice"},Some(&invoice_id.to_string()),&format!("invoice_no={invoice_no}; stock updated atomically"))?;
+    tx.commit().map_err(|e|e.to_string())?;
+    Ok(format!("تم اعتماد الفاتورة {invoice_no} وتحديث المخزون بنجاح"))
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn cancel_invoice(app: tauri::AppHandle, state: State<'_, AppState>, invoice_type: String, invoice_id: i64) -> Result<String,String> {
+    let ctx=invoice_context(&invoice_type)?;let actor=require_permission(state.inner(),ctx.cancel_permission)?;
+    if !actor.permissions.iter().any(|p|p==ctx.view_permission) { return Err("لازم تملك صلاحية عرض الفواتير قبل إلغائها".into()); }
+    let path=database_path(&app)?;initialize_database(&path)?;let mut conn=connect(&path)?;
+    let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|e.to_string())?;
+    let invoice:Option<(String,String)>=tx.query_row(&format!("SELECT invoice_no,status FROM {header} WHERE id=?1",header=ctx.header),[invoice_id],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(|e|e.to_string())?;
+    let Some((invoice_no,status))=invoice else{return Err("الفاتورة غير موجودة".into());};
+    if status=="cancelled" {return Err("الفاتورة ملغاة بالفعل".into());}
+    if status=="posted" {
+        let warehouse_id:i64=tx.query_row("SELECT id FROM warehouses WHERE code='MAIN' LIMIT 1",[],|r|r.get(0)).map_err(|e|e.to_string())?;
+        let fk=if ctx.kind=="purchase" {"purchase_invoice_id"} else {"sale_id"};
+        let sql=format!("SELECT il.product_id,il.quantity_milli,COALESCE(il.unit,p.unit,'قطعة'),p.code,p.name FROM {lines} il JOIN products p ON p.id=il.product_id WHERE il.{fk}=?1 ORDER BY il.id",lines=ctx.lines,fk=fk);
+        let items={let mut stmt=tx.prepare(&sql).map_err(|e|e.to_string())?;let rows=stmt.query_map([invoice_id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?))).map_err(|e|e.to_string())?;rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?};
+        for (product_id,quantity,unit,code,name) in items {
+            let signed=if ctx.kind=="purchase" {-quantity} else {quantity};
+            if ctx.kind=="purchase" {
+                let balance:i64=tx.query_row("SELECT COALESCE(SUM(quantity_milli),0) FROM stock_movements WHERE product_id=?1 AND warehouse_id=?2",params![product_id,warehouse_id],|r|r.get(0)).map_err(|e|e.to_string())?;
+                if balance<quantity {return Err(format!("لا يمكن إلغاء فاتورة الشراء؛ الرصيد الحالي للصنف {code} ({name}) لا يكفي لعكس الكمية. عالج المرتجعات أو الحركات أولًا."));}
+            }
+            tx.execute("INSERT INTO stock_movements(product_id,warehouse_id,movement_type,quantity_milli,reference_type,reference_id,notes,unit) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",params![product_id,warehouse_id,if ctx.kind=="purchase" {"purchase_return"} else {"sale_return"},signed,if ctx.kind=="purchase" {"purchase_invoice_cancel"} else {"sale_invoice_cancel"},invoice_id,format!("عكس أثر الفاتورة {invoice_no}"),unit]).map_err(|e|e.to_string())?;
+            write_audit(&tx,Some(&actor),if ctx.kind=="purchase" {"stock_out"} else {"stock_in"},"stock",Some(&product_id.to_string()),&format!("source=invoice_cancel; invoice_no={invoice_no}; code={code}; name={name}; quantity_milli={quantity}; unit={unit}"))?;
+        }
+    }
+    tx.execute(&format!("UPDATE {header} SET status='cancelled',cancelled_at=datetime('now'),updated_at=datetime('now') WHERE id=?1",header=ctx.header),[invoice_id]).map_err(|e|e.to_string())?;
+    write_audit(&tx,Some(&actor),if ctx.kind=="purchase" {"purchase_invoice_cancelled"} else {"sale_invoice_cancelled"},if ctx.kind=="purchase" {"purchase_invoice"} else {"sale_invoice"},Some(&invoice_id.to_string()),&format!("invoice_no={invoice_no}; previous_status={status}; stock_effect_reversed={}",status=="posted"))?;
+    tx.commit().map_err(|e|e.to_string())?;
+    Ok(format!("تم إلغاء الفاتورة {invoice_no}. تم الحفاظ على سجلها{}",if status=="posted" {" وعكس أثرها على المخزون بحركات موثقة"} else {" كمسودة دون حركة مخزون"}))
 }
 
 #[tauri::command]
@@ -1191,7 +1599,7 @@ pub fn run() {
             initialize_database(&path).map_err(std::io::Error::other)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![app_info, auth_status, create_initial_admin, login, logout, list_users, create_user, update_user_profile, set_user_active, set_user_role, list_user_permissions, set_user_permissions, reset_user_password, change_own_password, list_audit_log, create_product, find_product_by_barcode, list_products, search_products, list_inactive_products, search_inactive_products, reactivate_product, update_product, add_alternate_barcode, deactivate_product, list_stock, list_stock_movements, record_stock_movement, create_backup, list_restore_points, delete_restore_point, restore_backup])
+        .invoke_handler(tauri::generate_handler![app_info, auth_status, create_initial_admin, login, logout, list_users, create_user, update_user_profile, set_user_active, set_user_role, list_user_permissions, set_user_permissions, reset_user_password, change_own_password, list_audit_log, create_product, find_product_by_barcode, list_products, search_products, list_inactive_products, search_inactive_products, reactivate_product, update_product, add_alternate_barcode, deactivate_product, list_stock, list_stock_movements, record_stock_movement, list_parties, save_party, set_party_active, list_invoices, get_invoice_details, create_invoice, update_invoice_draft, post_invoice, cancel_invoice, create_backup, list_restore_points, delete_restore_point, restore_backup])
         .run(tauri::generate_context!())
         .expect("خطأ أثناء تشغيل مدار");
 }
