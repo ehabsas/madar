@@ -78,6 +78,12 @@ fn initialize_database(path: &PathBuf) -> Result<(), String> {
             last_login_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_users_role ON users(role_id);
+        CREATE TABLE IF NOT EXISTS user_permission_overrides (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            permission_code TEXT NOT NULL REFERENCES permissions(code) ON DELETE CASCADE,
+            allowed INTEGER NOT NULL CHECK (allowed IN (0,1)),
+            PRIMARY KEY(user_id, permission_code)
+        );
         CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at DESC);
         CREATE TABLE IF NOT EXISTS warehouses (
             id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
@@ -99,8 +105,8 @@ fn initialize_database(path: &PathBuf) -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS idx_stock_movements_product_warehouse ON stock_movements(product_id, warehouse_id, created_at);
         INSERT OR IGNORE INTO warehouses(code,name) VALUES ('MAIN','المخزن الرئيسي');
         INSERT OR IGNORE INTO app_settings(key,value) VALUES ('app_name','مدار');
-        INSERT OR IGNORE INTO app_settings(key,value) VALUES ('database_schema_version','4');
-        UPDATE app_settings SET value='4', updated_at=datetime('now') WHERE key='database_schema_version' AND value IN ('2','3');
+        INSERT OR IGNORE INTO app_settings(key,value) VALUES ('database_schema_version','6');
+        UPDATE app_settings SET value='6', updated_at=datetime('now') WHERE key='database_schema_version' AND value IN ('1','2','3','4','5');
         INSERT OR IGNORE INTO app_settings(key,value) VALUES ('barcode_prefix','MAD');
         INSERT OR IGNORE INTO app_settings(key,value) VALUES ('barcode_auto_generate','true');"
     ).map_err(|e| e.to_string())?;
@@ -147,13 +153,36 @@ fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool
 
 fn seed_access_control(conn: &Connection) -> Result<(), String> {
     let permissions = [
+        // Legacy broad permissions retained for compatibility with existing databases.
         ("products.view", "عرض المنتجات", "عرض وبحث الأصناف والباركودات"),
-        ("products.manage", "إدارة المنتجات", "إضافة وتعديل وإيقاف وإعادة تفعيل الأصناف"),
+        ("products.manage", "إدارة المنتجات (قديم)", "صلاحية شاملة قديمة لإدارة الأصناف"),
         ("stock.view", "عرض المخزون", "عرض الأرصدة وسجل الحركات"),
-        ("stock.manage", "إدارة المخزون", "تسجيل حركات الوارد والمنصرف"),
-        ("backup.manage", "النسخ والاستعادة", "إنشاء النسخ الاحتياطية واستعادة وحذف نقاط الاستعادة"),
-        ("users.manage", "إدارة المستخدمين", "إنشاء وتعطيل المستخدمين وتحديد أدوارهم"),
+        ("stock.manage", "إدارة المخزون (قديم)", "صلاحية شاملة قديمة لحركات المخزون"),
+        ("backup.manage", "النسخ والاستعادة (قديم)", "صلاحية شاملة قديمة للنسخ والاستعادة"),
+        ("users.manage", "إدارة المستخدمين (قديم)", "صلاحية شاملة قديمة لإدارة المستخدمين"),
         ("audit.view", "عرض سجل النشاط", "عرض عمليات المستخدمين وسجل التدقيق"),
+        // Product-level permissions.
+        ("products.create", "إضافة صنف", "إنشاء أصناف جديدة"),
+        ("products.edit", "تعديل بيانات الصنف", "تعديل الكود والاسم والوحدة والبيانات العامة"),
+        ("products.deactivate", "إيقاف صنف", "إيقاف الصنف دون حذفه نهائيًا"),
+        ("products.reactivate", "إعادة تفعيل صنف", "إرجاع الصنف الموقوف إلى الأصناف النشطة"),
+        ("products.barcode.manage", "إدارة الباركودات", "إضافة باركودات بديلة للصنف"),
+        ("products.purchase_price.edit", "تعديل سعر الشراء", "تغيير سعر الشراء عند إنشاء أو تعديل صنف"),
+        ("products.sale_price.edit", "تعديل سعر البيع", "تغيير سعر البيع عند إنشاء أو تعديل صنف"),
+        // Stock permissions.
+        ("stock.movement.record", "تسجيل حركات المخزون", "تسجيل الوارد والمنصرف يدويًا"),
+        // Backup permissions.
+        ("backup.view_points", "عرض نقاط الاستعادة", "عرض نقاط الاستعادة المحفوظة داخل مدار"),
+        ("backup.create", "إنشاء نسخة احتياطية", "حفظ نسخة احتياطية إلى ملف"),
+        ("backup.restore", "استعادة نسخة احتياطية", "استعادة قاعدة البيانات من نسخة"),
+        ("backup.points.delete", "حذف نقطة استعادة", "حذف نقاط الاستعادة التي أنشأها مدار"),
+        // User administration permissions.
+        ("users.view", "عرض المستخدمين", "عرض قائمة حسابات المستخدمين"),
+        ("users.create", "إنشاء مستخدم", "إنشاء حساب مستخدم جديد"),
+        ("users.status.manage", "تفعيل وإيقاف الحسابات", "تفعيل أو إيقاف حساب المستخدم"),
+        ("users.role.manage", "تغيير أدوار المستخدمين", "تغيير دور المستخدم"),
+        ("users.permissions.manage", "تخصيص صلاحيات المستخدم", "ضبط الصلاحيات الفردية لكل مستخدم؛ لمدير النظام فقط"),
+        ("users.password.reset", "إعادة تعيين كلمة المرور", "تعيين كلمة مرور جديدة لمستخدم آخر"),
     ];
     for (code, name, description) in permissions {
         conn.execute("INSERT OR IGNORE INTO permissions(code,name,description) VALUES (?1,?2,?3)", params![code,name,description]).map_err(|e| e.to_string())?;
@@ -168,6 +197,19 @@ fn seed_access_control(conn: &Connection) -> Result<(), String> {
     let viewer = ["products.view","stock.view"];
     let matrices: [(&str, &[&str]); 5] = [("admin", &all), ("manager", &manager), ("warehouse", &warehouse), ("sales", &sales), ("viewer", &viewer)];
     for (role, items) in matrices {
+        let role_id: i64 = conn.query_row("SELECT id FROM roles WHERE code=?1", [role], |r| r.get(0)).map_err(|e| e.to_string())?;
+        for item in items {
+            conn.execute("INSERT OR IGNORE INTO role_permissions(role_id,permission_code) VALUES (?1,?2)", params![role_id,item]).map_err(|e| e.to_string())?;
+        }
+    }
+    // Detailed permission defaults; insert-only so existing user/custom overrides are never overwritten.
+    let admin_detailed = ["products.view","products.create","products.edit","products.deactivate","products.reactivate","products.barcode.manage","products.purchase_price.edit","products.sale_price.edit","stock.view","stock.movement.record","backup.view_points","backup.create","backup.restore","backup.points.delete","users.view","users.create","users.status.manage","users.role.manage","users.permissions.manage","users.password.reset","audit.view"];
+    let manager_detailed = ["products.view","products.create","products.edit","products.deactivate","products.reactivate","products.barcode.manage","products.purchase_price.edit","products.sale_price.edit","stock.view","stock.movement.record","backup.view_points","backup.create","backup.restore","backup.points.delete","audit.view"];
+    let warehouse_detailed = ["products.view","stock.view","stock.movement.record"];
+    let sales_detailed = ["products.view","stock.view"];
+    let viewer_detailed = ["products.view","stock.view"];
+    let detailed_matrices: [(&str, &[&str]); 5] = [("admin", &admin_detailed), ("manager", &manager_detailed), ("warehouse", &warehouse_detailed), ("sales", &sales_detailed), ("viewer", &viewer_detailed)];
+    for (role, items) in detailed_matrices {
         let role_id: i64 = conn.query_row("SELECT id FROM roles WHERE code=?1", [role], |r| r.get(0)).map_err(|e| e.to_string())?;
         for item in items {
             conn.execute("INSERT OR IGNORE INTO role_permissions(role_id,permission_code) VALUES (?1,?2)", params![role_id,item]).map_err(|e| e.to_string())?;
@@ -212,10 +254,24 @@ fn load_user_session(conn: &Connection, user_id: i64) -> Result<UserSession, Str
         "SELECT u.username,u.display_name,r.code,r.name FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=?1 AND u.is_active=1",
         [user_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
     ).map_err(|_| "المستخدم غير موجود أو موقوف".to_string())?;
-    let mut stmt = conn.prepare("SELECT rp.permission_code FROM role_permissions rp JOIN users u ON u.role_id=rp.role_id WHERE u.id=?1 ORDER BY rp.permission_code").map_err(|e| e.to_string())?;
-    let rows = stmt.query_map([user_id], |r| r.get::<_,String>(0)).map_err(|e| e.to_string())?;
     let mut permissions = Vec::new();
-    for row in rows { permissions.push(row.map_err(|e| e.to_string())?); }
+    if role_code == "admin" {
+        // System administrators always retain every registered permission, even if stale overrides exist.
+        let mut stmt = conn.prepare("SELECT code FROM permissions ORDER BY code").map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |r| r.get::<_,String>(0)).map_err(|e| e.to_string())?;
+        for row in rows { permissions.push(row.map_err(|e| e.to_string())?); }
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT p.code FROM permissions p
+             JOIN users u ON u.id=?1
+             LEFT JOIN role_permissions rp ON rp.role_id=u.role_id AND rp.permission_code=p.code
+             LEFT JOIN user_permission_overrides up ON up.user_id=u.id AND up.permission_code=p.code
+             WHERE COALESCE(up.allowed, CASE WHEN rp.permission_code IS NULL THEN 0 ELSE 1 END)=1
+             ORDER BY p.code"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([user_id], |r| r.get::<_,String>(0)).map_err(|e| e.to_string())?;
+        for row in rows { permissions.push(row.map_err(|e| e.to_string())?); }
+    }
     Ok(UserSession { id:user_id, username, display_name, role_code, role_name, permissions })
 }
 
@@ -241,7 +297,11 @@ fn audit_event(app: &tauri::AppHandle, actor: Option<&UserSession>, action: &str
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct UserRow { id: i64, username: String, display_name: String, role_code: String, role_name: String, is_active: bool, created_at: String, last_login_at: Option<String> }
+struct UserRow { id: i64, username: String, display_name: String, role_code: String, role_name: String, is_active: bool, created_at: String, last_login_at: Option<String>, permission_overrides: i64 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PermissionDetail { code: String, name: String, description: String, allowed: bool, role_allowed: bool, is_override: bool }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -311,16 +371,16 @@ fn logout(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), Strin
 
 #[tauri::command]
 fn list_users(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Vec<UserRow>, String> {
-    let _actor = require_permission(state.inner(), "users.manage")?;
+    let _actor = require_permission(state.inner(), "users.view")?;
     let path = database_path(&app)?; initialize_database(&path)?; let conn = connect(&path)?;
-    let mut stmt = conn.prepare("SELECT u.id,u.username,u.display_name,r.code,r.name,u.is_active,u.created_at,u.last_login_at FROM users u JOIN roles r ON r.id=u.role_id ORDER BY u.id").map_err(|e| e.to_string())?;
-    let rows = stmt.query_map([], |r| Ok(UserRow { id:r.get(0)?,username:r.get(1)?,display_name:r.get(2)?,role_code:r.get(3)?,role_name:r.get(4)?,is_active:r.get::<_,i64>(5)?!=0,created_at:r.get(6)?,last_login_at:r.get(7)? })).map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT u.id,u.username,u.display_name,r.code,r.name,u.is_active,u.created_at,u.last_login_at,(SELECT COUNT(*) FROM user_permission_overrides po WHERE po.user_id=u.id) FROM users u JOIN roles r ON r.id=u.role_id ORDER BY u.id").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |r| Ok(UserRow { id:r.get(0)?,username:r.get(1)?,display_name:r.get(2)?,role_code:r.get(3)?,role_name:r.get(4)?,is_active:r.get::<_,i64>(5)?!=0,created_at:r.get(6)?,last_login_at:r.get(7)?,permission_overrides:r.get(8)? })).map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn create_user(app: tauri::AppHandle, state: State<'_, AppState>, username: String, display_name: String, role_code: String, password: String) -> Result<String, String> {
-    let actor = require_permission(state.inner(), "users.manage")?;
+    let actor = require_permission(state.inner(), "users.create")?;
     let username = validate_username(&username)?; let display_name = display_name.trim();
     if display_name.is_empty() { return Err("اكتب الاسم الظاهر للمستخدم".into()); }
     if password.chars().count() < 12 { return Err("كلمة المرور لازم تكون 12 حرفًا على الأقل".into()); }
@@ -337,11 +397,12 @@ fn create_user(app: tauri::AppHandle, state: State<'_, AppState>, username: Stri
 
 #[tauri::command]
 fn set_user_active(app: tauri::AppHandle, state: State<'_, AppState>, user_id: i64, active: bool) -> Result<String, String> {
-    let actor = require_permission(state.inner(), "users.manage")?;
+    let actor = require_permission(state.inner(), "users.status.manage")?;
     if user_id == actor.id && !active { return Err("لا يمكنك إيقاف حسابك أثناء استخدامه".into()); }
     let path=database_path(&app)?; initialize_database(&path)?; let mut conn=connect(&path)?; let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|e.to_string())?;
     let target: Option<(String,String,i64)> = tx.query_row("SELECT u.username,r.code,u.is_active FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=?1",[user_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e|e.to_string())?;
     let Some((username,role,was_active))=target else{return Err("المستخدم غير موجود".into());};
+    if role=="admin" && actor.role_code!="admin" { return Err("إدارة حسابات مدير النظام متاحة لمدير النظام فقط".into()); }
     if role=="admin" && was_active==1 && !active {
         let admins:i64=tx.query_row("SELECT COUNT(*) FROM users u JOIN roles r ON r.id=u.role_id WHERE r.code='admin' AND u.is_active=1",[],|r|r.get(0)).map_err(|e|e.to_string())?;
         if admins<=1{return Err("لا يمكن إيقاف آخر مدير نظام نشط".into());}
@@ -353,11 +414,12 @@ fn set_user_active(app: tauri::AppHandle, state: State<'_, AppState>, user_id: i
 
 #[tauri::command]
 fn reset_user_password(app: tauri::AppHandle, state: State<'_, AppState>, user_id: i64, new_password: String) -> Result<String, String> {
-    let actor = require_permission(state.inner(), "users.manage")?;
+    let actor = require_permission(state.inner(), "users.password.reset")?;
     if new_password.chars().count()<12{return Err("كلمة المرور الجديدة لازم تكون 12 حرفًا على الأقل".into());}
     let path=database_path(&app)?;initialize_database(&path)?;let mut conn=connect(&path)?;let tx=conn.transaction().map_err(|e|e.to_string())?;
-    let username:Option<String>=tx.query_row("SELECT username FROM users WHERE id=?1",[user_id],|r|r.get(0)).optional().map_err(|e|e.to_string())?;
-    let Some(username)=username else{return Err("المستخدم غير موجود".into());};
+    let target:Option<(String,String)>=tx.query_row("SELECT u.username,r.code FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=?1",[user_id],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(|e|e.to_string())?;
+    let Some((username,target_role))=target else{return Err("المستخدم غير موجود".into());};
+    if target_role=="admin" && actor.role_code!="admin" { return Err("إعادة تعيين كلمة مرور مدير النظام متاحة لمدير النظام فقط".into()); }
     let hashed=hash_password(&new_password)?;tx.execute("UPDATE users SET password_hash=?1,updated_at=datetime('now') WHERE id=?2",params![hashed,user_id]).map_err(|e|e.to_string())?;
     write_audit(&tx,Some(&actor),"password_reset","user",Some(&user_id.to_string()),&format!("password reset for username={username}"))?;tx.commit().map_err(|e|e.to_string())?;
     Ok(format!("تم تغيير كلمة مرور {username}"))
@@ -380,13 +442,14 @@ fn change_own_password(app: tauri::AppHandle, state: State<'_, AppState>, curren
 
 #[tauri::command]
 fn set_user_role(app: tauri::AppHandle, state: State<'_, AppState>, user_id: i64, role_code: String) -> Result<String, String> {
-    let actor=require_permission(state.inner(),"users.manage")?;
+    let actor=require_permission(state.inner(),"users.role.manage")?;
     if user_id==actor.id{return Err("لأمان النظام، لا يمكن تغيير دور الحساب المستخدم حاليًا. استخدم حساب مدير آخر عند الحاجة.".into());}
     let allowed=["admin","manager","warehouse","sales","viewer"];
     if !allowed.contains(&role_code.as_str()){return Err("الدور المحدد غير صالح".into());}
     let path=database_path(&app)?;initialize_database(&path)?;let mut conn=connect(&path)?;let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|e.to_string())?;
     let old:Option<(String,String,i64)>=tx.query_row("SELECT u.username,r.code,u.is_active FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=?1",[user_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e|e.to_string())?;
     let Some((username,old_role,active))=old else{return Err("المستخدم غير موجود".into());};
+    if old_role=="admin" && actor.role_code!="admin" {return Err("إدارة دور مدير النظام متاحة لمدير النظام فقط".into());}
     if old_role=="admin" && role_code!="admin" && active==1 {
       let admins:i64=tx.query_row("SELECT COUNT(*) FROM users u JOIN roles r ON r.id=u.role_id WHERE r.code='admin' AND u.is_active=1",[],|r|r.get(0)).map_err(|e|e.to_string())?;
       if admins<=1{return Err("لا يمكن تغيير دور آخر مدير نظام نشط".into());}
@@ -394,8 +457,95 @@ fn set_user_role(app: tauri::AppHandle, state: State<'_, AppState>, user_id: i64
     if role_code=="admin" && actor.role_code!="admin" {return Err("تعيين دور مدير النظام متاح لمدير النظام فقط".into());}
     let role_id:i64=tx.query_row("SELECT id FROM roles WHERE code=?1",[&role_code],|r|r.get(0)).map_err(|e|e.to_string())?;
     tx.execute("UPDATE users SET role_id=?1,updated_at=datetime('now') WHERE id=?2",params![role_id,user_id]).map_err(|e|e.to_string())?;
+    if role_code=="admin" || old_role=="admin" {
+        tx.execute("DELETE FROM user_permission_overrides WHERE user_id=?1",[user_id]).map_err(|e|e.to_string())?;
+    }
     write_audit(&tx,Some(&actor),"user_role_changed","user",Some(&user_id.to_string()),&format!("username={username}; old_role={old_role}; new_role={role_code}"))?;
     tx.commit().map_err(|e|e.to_string())?;Ok(format!("تم تحديث دور المستخدم {username}"))
+}
+
+#[tauri::command]
+fn list_user_permissions(app: tauri::AppHandle, state: State<'_, AppState>, user_id: i64) -> Result<Vec<PermissionDetail>, String> {
+    let actor = require_permission(state.inner(), "users.permissions.manage")?;
+    if actor.role_code != "admin" { return Err("محرر الصلاحيات متاح لمدير النظام فقط".into()); }
+    if user_id == actor.id { return Err("لا يمكن تخصيص صلاحيات حسابك الحالي؛ لتجنب فقدان الوصول للنظام".into()); }
+    let path = database_path(&app)?; initialize_database(&path)?; let conn = connect(&path)?;
+    let role: Option<String> = conn.query_row("SELECT r.code FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=?1", [user_id], |r| r.get(0)).optional().map_err(|e| e.to_string())?;
+    let Some(role_code) = role else { return Err("المستخدم غير موجود".into()); };
+    if role_code == "admin" { return Err("لا يمكن تخصيص صلاحيات حساب مدير النظام؛ فهو يحتفظ بكل الصلاحيات".into()); }
+    let mut stmt = conn.prepare(
+        "SELECT p.code,p.name,p.description,
+          COALESCE(up.allowed, CASE WHEN rp.permission_code IS NULL THEN 0 ELSE 1 END) AS effective_allowed,
+          CASE WHEN rp.permission_code IS NULL THEN 0 ELSE 1 END AS role_allowed,
+          CASE WHEN up.user_id IS NULL THEN 0 ELSE 1 END AS has_override
+         FROM permissions p
+         JOIN users u ON u.id=?1
+         LEFT JOIN role_permissions rp ON rp.role_id=u.role_id AND rp.permission_code=p.code
+         LEFT JOIN user_permission_overrides up ON up.user_id=u.id AND up.permission_code=p.code
+         WHERE p.code NOT IN ('products.manage','stock.manage','backup.manage','users.manage')
+         ORDER BY CASE
+           WHEN p.code LIKE 'products.%' THEN 1 WHEN p.code LIKE 'stock.%' THEN 2
+           WHEN p.code LIKE 'backup.%' THEN 3 WHEN p.code LIKE 'users.%' THEN 4
+           WHEN p.code LIKE 'audit.%' THEN 5 ELSE 6 END, p.code"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([user_id], |r| Ok(PermissionDetail { code:r.get(0)?,name:r.get(1)?,description:r.get(2)?,allowed:r.get::<_,i64>(3)?!=0,role_allowed:r.get::<_,i64>(4)?!=0,is_override:r.get::<_,i64>(5)?!=0 })).map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_user_permissions(app: tauri::AppHandle, state: State<'_, AppState>, user_id: i64, allowed_codes: Vec<String>) -> Result<String, String> {
+    let actor = require_permission(state.inner(), "users.permissions.manage")?;
+    if actor.role_code != "admin" { return Err("تخصيص الصلاحيات متاح لمدير النظام فقط".into()); }
+    if user_id == actor.id { return Err("لا يمكن تخصيص صلاحيات حسابك الحالي؛ لتجنب فقدان الوصول للنظام".into()); }
+    let path=database_path(&app)?; initialize_database(&path)?; let mut conn=connect(&path)?;
+    let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|e.to_string())?;
+    let target: Option<(String,String)> = tx.query_row("SELECT u.username,r.code FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=?1", [user_id], |r| Ok((r.get(0)?,r.get(1)?))).optional().map_err(|e|e.to_string())?;
+    let Some((username,role_code))=target else { return Err("المستخدم غير موجود".into()); };
+    if role_code=="admin" { return Err("لا يمكن تخصيص صلاحيات حساب مدير النظام؛ فهو يحتفظ بكل الصلاحيات".into()); }
+    let unique: std::collections::HashSet<String> = allowed_codes.iter().cloned().collect();
+    if unique.len()!=allowed_codes.len() { return Err("قائمة الصلاحيات تحتوي على تكرار غير متوقع".into()); }
+    let mut stmt=tx.prepare("SELECT code FROM permissions WHERE code NOT IN ('products.manage','stock.manage','backup.manage','users.manage')").map_err(|e|e.to_string())?;
+    let all_rows=stmt.query_map([],|r|r.get::<_,String>(0)).map_err(|e|e.to_string())?;
+    let mut all_codes=Vec::new(); for row in all_rows { all_codes.push(row.map_err(|e|e.to_string())?); } drop(stmt);
+    if let Some(unknown)=allowed_codes.iter().find(|code|!all_codes.contains(code)) { return Err(format!("الصلاحية غير معروفة: {unknown}")); }
+    if unique.contains("users.permissions.manage") { return Err("صلاحية تخصيص الصلاحيات لا يمكن منحها لمستخدم آخر؛ وهي محجوزة لمدير النظام".into()); }
+    let dependencies: [(&str, &str); 13] = [
+        ("products.create","products.view"), ("products.edit","products.view"),
+        ("products.deactivate","products.view"), ("products.reactivate","products.view"),
+        ("products.barcode.manage","products.view"), ("products.purchase_price.edit","products.view"),
+        ("products.sale_price.edit","products.view"), ("stock.movement.record","stock.view"),
+        ("backup.points.delete","backup.view_points"), ("users.create","users.view"),
+        ("users.status.manage","users.view"), ("users.role.manage","users.view"),
+        ("users.password.reset","users.view")
+    ];
+    for (permission, required) in dependencies {
+        if unique.contains(permission) && !unique.contains(required) {
+            return Err(format!("صلاحية {permission} تتطلب أيضًا صلاحية {required}"));
+        }
+    }
+    if (unique.contains("products.purchase_price.edit") || unique.contains("products.sale_price.edit"))
+        && !(unique.contains("products.create") || unique.contains("products.edit")) {
+        return Err("صلاحيات تعديل الأسعار تتطلب السماح بإضافة الأصناف أو تعديل بياناتها".into());
+    }
+    let mut changed=Vec::new();
+    for code in &all_codes {
+        let desired=unique.contains(code);
+        let role_allowed: bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM role_permissions WHERE role_id=(SELECT role_id FROM users WHERE id=?1) AND permission_code=?2)",params![user_id,code],|r|Ok(r.get::<_,i64>(0)?!=0)).map_err(|e|e.to_string())?;
+        if desired==role_allowed {
+            let removed=tx.execute("DELETE FROM user_permission_overrides WHERE user_id=?1 AND permission_code=?2",params![user_id,code]).map_err(|e|e.to_string())?;
+            if removed>0 { changed.push(format!("{code}=role_default")); }
+        } else {
+            let wanted=if desired {1_i64} else {0_i64};
+            let previous:Option<i64>=tx.query_row("SELECT allowed FROM user_permission_overrides WHERE user_id=?1 AND permission_code=?2",params![user_id,code],|r|r.get(0)).optional().map_err(|e|e.to_string())?;
+            if previous!=Some(wanted) {
+                tx.execute("INSERT INTO user_permission_overrides(user_id,permission_code,allowed) VALUES (?1,?2,?3) ON CONFLICT(user_id,permission_code) DO UPDATE SET allowed=excluded.allowed",params![user_id,code,wanted]).map_err(|e|e.to_string())?;
+                changed.push(format!("{code}={}",if desired{"allowed"}else{"denied"}));
+            }
+        }
+    }
+    write_audit(&tx,Some(&actor),"user_permissions_changed","user",Some(&user_id.to_string()),&format!("username={username}; changed={}",if changed.is_empty(){"none".into()}else{changed.join(",")}))?;
+    tx.commit().map_err(|e|e.to_string())?;
+    Ok(format!("تم حفظ الصلاحيات التفصيلية للمستخدم {username}. تسري التغييرات عند تسجيل دخوله التالي."))
 }
 
 #[tauri::command]
@@ -435,7 +585,7 @@ fn app_info() -> serde_json::Value {
 
 #[tauri::command]
 fn create_product(app: tauri::AppHandle, state: State<'_, AppState>, code: String, name: String, unit: Option<String>, barcode: Option<String>, purchase_price_minor: i64, sale_price_minor: i64) -> Result<ProductRow, String> {
-    let actor = require_permission(state.inner(), "products.manage")?;
+    let actor = require_permission(state.inner(), "products.create")?;
     let path = database_path(&app)?;
     initialize_database(&path)?;
     let mut conn = connect(&path)?;
@@ -455,6 +605,8 @@ fn create_product(app: tauri::AppHandle, state: State<'_, AppState>, code: Strin
     };
     let duplicate: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM product_barcodes WHERE barcode=?1)", [&barcode_value], |r| r.get(0)).map_err(|e| e.to_string())?;
     if duplicate { return Err("الباركود مستخدم بالفعل لصنف آخر. أدخل باركود مختلفًا.".into()); }
+    let purchase_price_minor = if actor.permissions.iter().any(|p| p == "products.purchase_price.edit") { purchase_price_minor } else { 0 };
+    let sale_price_minor = if actor.permissions.iter().any(|p| p == "products.sale_price.edit") { sale_price_minor } else { 0 };
     tx.execute("INSERT INTO products(code,name,unit,purchase_price_minor,sale_price_minor) VALUES (?1,?2,?3,?4,?5)", params![product_code, product_name, unit_value, purchase_price_minor, sale_price_minor]).map_err(|e| e.to_string())?;
     let id = tx.last_insert_rowid();
     tx.execute("INSERT INTO product_barcodes(product_id,unit,barcode,barcode_type,is_primary) VALUES (?1,?2,?3,?4,1)", params![id, unit_value, barcode_value, barcode_type]).map_err(|e| e.to_string())?;
@@ -525,7 +677,7 @@ fn search_inactive_products(app: tauri::AppHandle, state: State<'_, AppState>, q
 
 #[tauri::command]
 fn reactivate_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64) -> Result<String, String> {
-    let actor = require_permission(state.inner(), "products.manage")?;
+    let actor = require_permission(state.inner(), "products.reactivate")?;
     let path = database_path(&app)?;
     initialize_database(&path)?;
     let mut conn = connect(&path)?;
@@ -542,7 +694,7 @@ fn reactivate_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64
 
 #[tauri::command]
 fn update_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, code: String, name: String, unit: String, purchase_price_minor: i64, sale_price_minor: i64) -> Result<ProductRow, String> {
-    let actor = require_permission(state.inner(), "products.manage")?;
+    let actor = require_permission(state.inner(), "products.edit")?;
     let path = database_path(&app)?;
     initialize_database(&path)?;
     let mut conn = connect(&path)?;
@@ -552,8 +704,10 @@ fn update_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, co
     let unit = unit.trim();
     if code.is_empty() || name.is_empty() || unit.is_empty() { return Err("الكود والاسم والوحدة حقول مطلوبة".into()); }
     if purchase_price_minor < 0 || sale_price_minor < 0 { return Err("السعر لا يمكن أن يكون سالبًا".into()); }
-    let current_unit: Option<String> = tx.query_row("SELECT unit FROM products WHERE id=?1 AND is_active=1", [id], |r| r.get(0)).optional().map_err(|e| e.to_string())?;
-    let Some(current_unit) = current_unit else { return Err("الصنف غير موجود أو موقوف".into()); };
+    let current: Option<(String,i64,i64)> = tx.query_row("SELECT unit,purchase_price_minor,sale_price_minor FROM products WHERE id=?1 AND is_active=1", [id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e| e.to_string())?;
+    let Some((current_unit,current_purchase_price,current_sale_price)) = current else { return Err("الصنف غير موجود أو موقوف".into()); };
+    if purchase_price_minor != current_purchase_price && !actor.permissions.iter().any(|p| p == "products.purchase_price.edit") { return Err("ليس لديك صلاحية تعديل سعر الشراء".into()); }
+    if sale_price_minor != current_sale_price && !actor.permissions.iter().any(|p| p == "products.sale_price.edit") { return Err("ليس لديك صلاحية تعديل سعر البيع".into()); }
     if current_unit != unit {
         let on_hand: i64 = tx.query_row("SELECT COALESCE(SUM(quantity_milli),0) FROM stock_movements WHERE product_id=?1", [id], |r| r.get(0)).map_err(|e| e.to_string())?;
         if on_hand != 0 {
@@ -570,7 +724,7 @@ fn update_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, co
 
 #[tauri::command]
 fn add_alternate_barcode(app: tauri::AppHandle, state: State<'_, AppState>, product_id: i64, barcode: String, unit: Option<String>) -> Result<String, String> {
-    let actor = require_permission(state.inner(), "products.manage")?;
+    let actor = require_permission(state.inner(), "products.barcode.manage")?;
     let path = database_path(&app)?;
     initialize_database(&path)?;
     let mut conn = connect(&path)?;
@@ -590,7 +744,7 @@ fn add_alternate_barcode(app: tauri::AppHandle, state: State<'_, AppState>, prod
 
 #[tauri::command]
 fn deactivate_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64) -> Result<String, String> {
-    let actor = require_permission(state.inner(), "products.manage")?;
+    let actor = require_permission(state.inner(), "products.deactivate")?;
     let path = database_path(&app)?;
     initialize_database(&path)?;
     let mut conn = connect(&path)?;
@@ -686,7 +840,7 @@ fn record_stock_movement(
     quantity_milli: i64,
     notes: Option<String>,
 ) -> Result<String, String> {
-    let actor = require_permission(state.inner(), "stock.manage")?;
+    let actor = require_permission(state.inner(), "stock.movement.record")?;
     if quantity_milli <= 0 {
         return Err("الكمية لازم تكون أكبر من صفر".into());
     }
@@ -751,7 +905,7 @@ fn record_stock_movement(
 
 #[tauri::command]
 fn create_backup(app: tauri::AppHandle, state: State<'_, AppState>, destination: String) -> Result<String, String> {
-    let actor = require_permission(state.inner(), "backup.manage")?;
+    let actor = require_permission(state.inner(), "backup.create")?;
     let source = database_path(&app)?;
     initialize_database(&source)?;
     let destination_path = PathBuf::from(destination.trim());
@@ -789,7 +943,7 @@ struct RestorePoint {
 
 #[tauri::command]
 fn list_restore_points(app: tauri::AppHandle, state: State<'_, AppState>, ) -> Result<Vec<RestorePoint>, String> {
-    let actor = require_permission(state.inner(), "backup.manage")?;
+    let _actor = require_permission(state.inner(), "backup.view_points")?;
     let current = database_path(&app)?;
     let dir = current.parent().ok_or("تعذر تحديد مجلد قاعدة البيانات")?;
     let mut points = Vec::new();
@@ -828,7 +982,7 @@ fn list_restore_points(app: tauri::AppHandle, state: State<'_, AppState>, ) -> R
 
 #[tauri::command]
 fn delete_restore_point(app: tauri::AppHandle, state: State<'_, AppState>, point_path: String) -> Result<String, String> {
-    let actor = require_permission(state.inner(), "backup.manage")?;
+    let actor = require_permission(state.inner(), "backup.points.delete")?;
     let current = database_path(&app)?;
     let dir = current.parent().ok_or("تعذر تحديد مجلد قاعدة البيانات")?;
     let path = PathBuf::from(point_path.trim());
@@ -850,7 +1004,7 @@ fn delete_restore_point(app: tauri::AppHandle, state: State<'_, AppState>, point
 
 #[tauri::command]
 fn restore_backup(app: tauri::AppHandle, state: State<'_, AppState>, backup_path: String) -> Result<String, String> {
-    let actor = require_permission(state.inner(), "backup.manage")?;
+    let actor = require_permission(state.inner(), "backup.restore")?;
     let current = database_path(&app)?;
     let backup_path = PathBuf::from(backup_path.trim());
     if !backup_path.is_file() {
@@ -902,24 +1056,31 @@ fn restore_backup(app: tauri::AppHandle, state: State<'_, AppState>, backup_path
         let merge = Connection::open(&temp).map_err(|e| e.to_string())?;
         merge.pragma_update(None, "foreign_keys", "ON").map_err(|e| e.to_string())?;
         merge.execute("ATTACH DATABASE ?1 AS previous", [current.to_string_lossy().to_string()]).map_err(|e| format!("تعذر إرفاق قاعدة البيانات الحالية للحفاظ على المستخدمين والسجل: {e}"))?;
-        let merge_result = merge.execute_batch(
+        let previous_has_overrides: bool = merge.query_row("SELECT EXISTS(SELECT 1 FROM previous.sqlite_master WHERE type='table' AND name='user_permission_overrides')", [], |r| r.get(0)).unwrap_or(false);
+        let copy_overrides_sql = if previous_has_overrides {
+            "INSERT INTO user_permission_overrides(user_id,permission_code,allowed) SELECT user_id,permission_code,allowed FROM previous.user_permission_overrides;"
+        } else { "" };
+        let merge_sql = format!(
             "BEGIN IMMEDIATE;
+             DELETE FROM user_permission_overrides;
              DELETE FROM role_permissions;
              DELETE FROM users;
-             DELETE FROM permissions;
              DELETE FROM roles;
              INSERT INTO roles(id,code,name,is_system,created_at) SELECT id,code,name,is_system,created_at FROM previous.roles;
-             INSERT INTO permissions(code,name,description) SELECT code,name,description FROM previous.permissions;
-             INSERT INTO role_permissions(role_id,permission_code) SELECT role_id,permission_code FROM previous.role_permissions;
+             INSERT OR IGNORE INTO permissions(code,name,description) SELECT code,name,description FROM previous.permissions;
+             INSERT OR IGNORE INTO role_permissions(role_id,permission_code) SELECT role_id,permission_code FROM previous.role_permissions;
              INSERT INTO users(id,username,display_name,password_hash,role_id,is_active,created_at,updated_at,last_login_at)
                 SELECT id,username,display_name,password_hash,role_id,is_active,created_at,updated_at,last_login_at FROM previous.users;
+             {copy_overrides_sql}
              DELETE FROM audit_log;
              INSERT INTO audit_log(id,action,entity_type,entity_id,details,created_at,actor_user_id,actor_username)
                 SELECT id,action,entity_type,entity_id,details,created_at,actor_user_id,actor_username FROM previous.audit_log;
              COMMIT;"
         );
+        let merge_result = merge.execute_batch(&merge_sql);
         if let Err(error) = merge_result { let _ = merge.execute_batch("ROLLBACK;"); return Err(format!("تعذر الحفاظ على حسابات المستخدمين وسجل التدقيق أثناء الاستعادة: {error}")); }
         merge.execute_batch("DETACH DATABASE previous;").map_err(|e| e.to_string())?;
+        seed_access_control(&merge)?;
         drop(merge);
         // Flush the restored database's WAL before renaming its main file.
         if let Ok(checkpoint) = Connection::open(&temp) {
@@ -963,7 +1124,7 @@ pub fn run() {
             initialize_database(&path).map_err(std::io::Error::other)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![app_info, auth_status, create_initial_admin, login, logout, list_users, create_user, set_user_active, set_user_role, reset_user_password, change_own_password, list_audit_log, create_product, find_product_by_barcode, list_products, search_products, list_inactive_products, search_inactive_products, reactivate_product, update_product, add_alternate_barcode, deactivate_product, list_stock, list_stock_movements, record_stock_movement, create_backup, list_restore_points, delete_restore_point, restore_backup])
+        .invoke_handler(tauri::generate_handler![app_info, auth_status, create_initial_admin, login, logout, list_users, create_user, set_user_active, set_user_role, list_user_permissions, set_user_permissions, reset_user_password, change_own_password, list_audit_log, create_product, find_product_by_barcode, list_products, search_products, list_inactive_products, search_inactive_products, reactivate_product, update_product, add_alternate_barcode, deactivate_product, list_stock, list_stock_movements, record_stock_movement, create_backup, list_restore_points, delete_restore_point, restore_backup])
         .run(tauri::generate_context!())
         .expect("خطأ أثناء تشغيل مدار");
 }
