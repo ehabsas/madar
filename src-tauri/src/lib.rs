@@ -114,83 +114,6 @@ fn create_product(app: tauri::AppHandle, code: String, name: String, unit: Optio
 }
 
 #[tauri::command]
-fn update_product(
-    app: tauri::AppHandle,
-    id: i64,
-    code: String,
-    name: String,
-    unit: Option<String>,
-    additional_barcode: Option<String>,
-    purchase_price_minor: i64,
-    sale_price_minor: i64,
-) -> Result<ProductRow, String> {
-    let path = database_path(&app)?;
-    initialize_database(&path)?;
-    let mut conn = connect(&path)?;
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let product_code = code.trim();
-    let product_name = name.trim();
-    let unit_value = unit.unwrap_or_else(|| "قطعة".to_string()).trim().to_string();
-    if product_code.is_empty() || product_name.is_empty() || unit_value.is_empty() {
-        return Err("كود الصنف واسم الصنف والوحدة حقول مطلوبة".into());
-    }
-    if purchase_price_minor < 0 || sale_price_minor < 0 {
-        return Err("السعر لا يمكن أن يكون سالبًا".into());
-    }
-    let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM products WHERE id=?1 AND is_active=1)", [id], |r| r.get(0)).map_err(|e| e.to_string())?;
-    if !exists { return Err("الصنف غير موجود أو محذوف".into()); }
-    let duplicate_code: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM products WHERE code=?1 AND id<>?2)", params![product_code, id], |r| r.get(0)).map_err(|e| e.to_string())?;
-    if duplicate_code { return Err("كود الصنف مستخدم بالفعل".into()); }
-
-    // Existing barcodes are never replaced or removed during an edit.
-    // If a new barcode is entered, add it as an alternate barcode.
-    let extra = additional_barcode.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-    if let Some(ref barcode) = extra {
-        let duplicate: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM product_barcodes WHERE barcode=?1)", [barcode], |r| r.get(0)).map_err(|e| e.to_string())?;
-        if duplicate { return Err("الباركود الإضافي مستخدم بالفعل. لم يتم تغيير بيانات الصنف.".into()); }
-    }
-    tx.execute("UPDATE products SET code=?1,name=?2,unit=?3,purchase_price_minor=?4,sale_price_minor=?5,updated_at=datetime('now') WHERE id=?6",
-        params![product_code, product_name, unit_value, purchase_price_minor, sale_price_minor, id]).map_err(|e| e.to_string())?;
-    if let Some(barcode) = extra {
-        tx.execute("INSERT INTO product_barcodes(product_id,unit,barcode,barcode_type,is_primary) VALUES (?1,?2,?3,'alternate',0)", params![id, unit_value, barcode]).map_err(|e| e.to_string())?;
-    }
-    tx.execute("INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES ('update','product',?1,?2)", params![id.to_string(), format!("code={}; name={}", product_code, product_name)]).map_err(|e| e.to_string())?;
-    let result = tx.query_row(
-        "SELECT p.id,p.code,p.name,p.unit,COALESCE((SELECT b.barcode FROM product_barcodes b WHERE b.product_id=p.id AND b.is_primary=1 LIMIT 1),''),p.purchase_price_minor,p.sale_price_minor FROM products p WHERE p.id=?1",
-        [id], |r| Ok(ProductRow { id:r.get(0)?, code:r.get(1)?, name:r.get(2)?, unit:r.get(3)?, barcode:r.get(4)?, purchase_price_minor:r.get(5)?, sale_price_minor:r.get(6)? })
-    ).map_err(|e| e.to_string())?;
-    tx.commit().map_err(|e| e.to_string())?;
-    Ok(result)
-}
-
-#[tauri::command]
-fn delete_product(app: tauri::AppHandle, id: i64) -> Result<String, String> {
-    let path = database_path(&app)?;
-    initialize_database(&path)?;
-    let conn = connect(&path)?;
-    let changed = conn.execute("UPDATE products SET is_active=0,updated_at=datetime('now') WHERE id=?1 AND is_active=1", [id]).map_err(|e| e.to_string())?;
-    if changed == 0 { return Err("الصنف غير موجود أو محذوف بالفعل".into()); }
-    conn.execute("INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES ('delete','product',?1,'soft delete; barcode values preserved')", [id.to_string()]).map_err(|e| e.to_string())?;
-    Ok("تم حذف الصنف من القائمة. تم الاحتفاظ ببياناته وباركوداته داخل قاعدة البيانات للحفاظ على سلامة السجلات.".into())
-}
-
-#[tauri::command]
-fn search_products(app: tauri::AppHandle, query: String) -> Result<Vec<ProductRow>, String> {
-    let path = database_path(&app)?;
-    initialize_database(&path)?;
-    let conn = connect(&path)?;
-    let q = query.trim();
-    let pattern = format!("%{}%", q);
-    let mut stmt = conn.prepare(
-        "SELECT p.id,p.code,p.name,p.unit,COALESCE((SELECT b.barcode FROM product_barcodes b WHERE b.product_id=p.id AND b.is_primary=1 LIMIT 1),''),p.purchase_price_minor,p.sale_price_minor
-         FROM products p WHERE p.is_active=1 AND (?1='' OR p.code LIKE ?2 OR p.name LIKE ?2 OR EXISTS(SELECT 1 FROM product_barcodes bx WHERE bx.product_id=p.id AND bx.barcode LIKE ?2))
-         ORDER BY p.name LIMIT 1000"
-    ).map_err(|e| e.to_string())?;
-    let rows = stmt.query_map(params![q, pattern], |r| Ok(ProductRow { id:r.get(0)?, code:r.get(1)?, name:r.get(2)?, unit:r.get(3)?, barcode:r.get(4)?, purchase_price_minor:r.get(5)?, sale_price_minor:r.get(6)? })).map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 fn find_product_by_barcode(app: tauri::AppHandle, barcode: String) -> Result<Option<ProductRow>, String> {
     let path = database_path(&app)?;
     initialize_database(&path)?;
@@ -377,7 +300,7 @@ pub fn run() {
             initialize_database(&path).map_err(std::io::Error::other)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![app_info, create_product, update_product, delete_product, search_products, find_product_by_barcode, list_products, create_backup, list_restore_points, delete_restore_point, restore_backup])
+        .invoke_handler(tauri::generate_handler![app_info, create_product, find_product_by_barcode, list_products, create_backup, list_restore_points, delete_restore_point, restore_backup])
         .run(tauri::generate_context!())
         .expect("خطأ أثناء تشغيل مدار");
 }
