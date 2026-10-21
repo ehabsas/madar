@@ -127,6 +127,7 @@ html[dir="rtl"] .brand .mark:after{content:'م'}
    </button>
    <div class="dropdown-menu user-menu" id="userMenu" hidden>
     <div class="dropdown-menu-head"><strong id="userMenuName" data-preserve-translation="true"></strong><small id="userMenuUsername" data-preserve-translation="true"></small><small id="userMenuRole"></small></div>
+    <button id="editMyProfileBtn" class="theme-btn" type="button"><span aria-hidden="true">👤</span><span>بياناتي الشخصية</span></button>
     <button id="changePasswordBtn" class="theme-btn" type="button" hidden><span aria-hidden="true">🔑</span><span>تغيير كلمة المرور</span></button>
     <button id="logoutBtn" class="theme-btn menu-action-danger" type="button" hidden><span aria-hidden="true">↪</span><span>تسجيل الخروج</span></button>
    </div>
@@ -317,6 +318,24 @@ html[dir="rtl"] .brand .mark:after{content:'م'}
  </section>
 </div>
 <div id="changePasswordOverlay" class="confirm-overlay" hidden><section class="confirm-box" role="dialog" aria-modal="true" aria-labelledby="changePasswordTitle"><h3 id="changePasswordTitle">تغيير كلمة المرور</h3><p class="muted">استخدم كلمة مرور قوية لا تقل عن 12 حرفًا.</p><form id="changeOwnPasswordForm"><label class="field">كلمة المرور الحالية<input id="ownCurrentPassword" type="password" required autocomplete="current-password"/></label><label class="field">كلمة المرور الجديدة<input id="ownNewPassword" type="password" minlength="12" required autocomplete="new-password"/></label><div class="confirm-actions"><button class="btn" type="submit" id="changeOwnPasswordSubmit">حفظ كلمة المرور</button><button class="btn secondary" type="button" id="cancelChangePassword">إلغاء</button></div><div id="ownPasswordStatus" class="status muted" role="status" aria-live="polite"></div></form></section></div>
+<div id="myProfileOverlay" class="confirm-overlay" hidden>
+ <section class="confirm-box user-detail-box" role="dialog" aria-modal="true" aria-labelledby="myProfileTitle">
+  <h3 id="myProfileTitle">بياناتي الشخصية</h3>
+  <p class="muted">عدّل بيانات التواصل والصورة الخاصة بحسابك. لا يمكن تغيير الدور أو الصلاحيات من هنا.</p>
+  <form id="myProfileForm">
+   <div class="avatar-preview-row"><div id="myProfileAvatarPreview" class="avatar-circle">م</div><div class="field"><span>الصورة الشخصية</span><input id="myProfileAvatarFile" type="file" accept="image/png,image/jpeg,image/webp"/><button id="clearMyProfileAvatar" class="btn secondary small-btn" type="button">استخدام الصورة الافتراضية</button></div></div>
+   <div class="grid">
+    <label class="field">الاسم الظاهر<input id="myProfileDisplayName" required maxlength="120" autocomplete="name"/></label>
+    <label class="field">اسم المستخدم<input id="myProfileUsername" readonly autocomplete="username"/></label>
+    <label class="field">البريد الإلكتروني<input id="myProfileEmail" type="email" maxlength="254" autocomplete="email"/></label>
+    <label class="field">رقم التليفون<input id="myProfilePhone" type="tel" maxlength="40" autocomplete="tel"/></label>
+    <label class="field" style="grid-column:1/-1">العنوان<textarea id="myProfileAddress" maxlength="400" autocomplete="street-address"></textarea></label>
+   </div>
+   <div class="confirm-actions"><button class="btn" id="saveMyProfileBtn" type="submit">حفظ بياناتي</button><button class="btn secondary" id="cancelMyProfileBtn" type="button">إلغاء</button></div>
+   <div id="myProfileStatus" class="status" role="status" aria-live="polite"></div>
+  </form>
+ </section>
+</div>
 <div id="createUserOverlay" class="confirm-overlay" hidden>
  <section class="confirm-box user-detail-box" role="dialog" aria-modal="true" aria-labelledby="createUserTitle">
   <h3 id="createUserTitle">إضافة مستخدم</h3><p class="muted">املأ البيانات الأساسية؛ البريد والهاتف والعنوان والصورة بيانات اختيارية.</p>
@@ -532,6 +551,25 @@ document.getElementById('alternateBarcodeForm').addEventListener('submit',async 
 });
 document.getElementById('cancelProductEdit').addEventListener('click',()=>document.getElementById('editProductOverlay').hidden=true);
 document.getElementById('editProductForm').addEventListener('submit',async e=>{e.preventDefault();const status=document.getElementById('editProductStatus');const button=document.getElementById('saveProductChanges');button.disabled=true;status.className='status';status.textContent=currentLanguage==='en'?'Saving changes…':'جارٍ حفظ التعديلات…';try{const p=await invoke('update_product',{id:Number(document.getElementById('editId').value),code:document.getElementById('editCode').value.trim(),name:document.getElementById('editName').value.trim(),unit:document.getElementById('editUnit').value.trim(),barcode:document.getElementById('editBarcode').value.trim(),purchasePriceMinor:Math.round(Number(document.getElementById('editPurchase').value)*100),salePriceMinor:Math.round(Number(document.getElementById('editSale').value)*100)});status.className='status status-success';status.textContent=currentLanguage==='en'?`Product “${p.name}” saved. Primary barcode: ${p.barcode}. Previous barcode retained as an alternate when changed.`:`تم تعديل «${p.name}». الباركود الأساسي الحالي: ${p.barcode}. تم الحفاظ على الباركود السابق إذا تم تغييره.`;await refreshProducts();setTimeout(()=>{document.getElementById('editProductOverlay').hidden=true;},900);}catch(err){status.className='status status-error';const raw=String(err?.message||err);status.textContent=(currentLanguage==='en'?'Could not save product: ':'فشل حفظ التعديلات: ')+(currentLanguage==='en'?localizeText(raw):raw);console.error('[Madar] update_product failed:',err);}finally{button.disabled=false;}});
+// Text paste is normally handled by WebKit. For barcode-only fields, remove control characters
+// commonly introduced by copied multi-line text or scanners; keep leading zeroes and all printable text.
+['barcode','editBarcode','alternateBarcodeValue','invoiceBarcodeScan'].forEach(id=>{
+ const field=document.getElementById(id);if(!field)return;
+ field.maxLength=128;
+ field.addEventListener('paste',event=>{
+  try{
+   const text=event.clipboardData?.getData('text/plain');if(typeof text!=='string'||text.length===0)return;
+   const cleaned=text.replace(/[\u0000-\u001F\u007F]/g,'').trim();
+   event.preventDefault();
+   const start=field.selectionStart??field.value.length;const end=field.selectionEnd??field.value.length;
+   const next=(field.value.slice(0,start)+cleaned+field.value.slice(end)).slice(0,128);
+   field.value=next;field.setSelectionRange(Math.min(start+cleaned.length,128),Math.min(start+cleaned.length,128));
+   field.dispatchEvent(new Event('input',{bubbles:true}));
+  }catch(error){console.warn('[Madar] Barcode paste normalization skipped:',error);}
+ });
+});
+window.addEventListener('error',event=>{console.error('[Madar renderer error]',event.message,event.filename,event.lineno,event.error);});
+window.addEventListener('unhandledrejection',event=>{console.error('[Madar unhandled promise rejection]',event.reason);});
 document.getElementById('productSearch').addEventListener('input',e=>refreshProducts(e.target.value));
 
 document.getElementById('refresh').addEventListener('click',()=>refreshProducts());
@@ -933,6 +971,7 @@ let userRowsCache=[];
 let activeDetailUser=null;
 let createAvatarDataUrl=null;
 let detailAvatarDataUrl=null;
+let myProfileAvatarDataUrl=null;
 const roleLabels={admin:'مدير النظام',manager:'مدير',warehouse:'مسؤول مخزن',sales:'مبيعات',viewer:'عرض فقط'};
 const roleLabelsEn={admin:'System administrator',manager:'Manager',warehouse:'Warehouse operator',sales:'Sales',viewer:'Read only'};
 function localizedRoleLabel(code,fallback=''){
@@ -1020,9 +1059,10 @@ function openUserDetail(userId){
 }
 async function saveAvatarFromInput(inputId,mode){
  const input=document.getElementById(inputId);const file=input.files?.[0];if(!file)return;
- const statusId=mode==='create'?'createUserStatus':'detailUserStatus';const status=document.getElementById(statusId);const submit=document.getElementById(mode==='create'?'createUserBtn':'saveUserProfile');status.textContent='جارٍ تجهيز الصورة...';if(submit)submit.disabled=true;
- try{const data=await imageFileToDataUrl(file);if(mode==='create'){createAvatarDataUrl=data;setAvatarPreview('newUserAvatarPreview',data,document.getElementById('newUserDisplayName').value);}else{detailAvatarDataUrl=data;setAvatarPreview('detailUserAvatarPreview',data,document.getElementById('detailDisplayName').value);}status.textContent='تم تجهيز الصورة.';}
- catch(err){status.textContent='تعذر تجهيز الصورة: '+err;input.value='';}
+ const cfg=mode==='create'?{status:'createUserStatus',submit:'createUserBtn',preview:'newUserAvatarPreview',name:'newUserDisplayName'}:mode==='detail'?{status:'detailUserStatus',submit:'saveUserProfile',preview:'detailUserAvatarPreview',name:'detailDisplayName'}:{status:'myProfileStatus',submit:'saveMyProfileBtn',preview:'myProfileAvatarPreview',name:'myProfileDisplayName'};
+ const status=document.getElementById(cfg.status);const submit=document.getElementById(cfg.submit);if(status)status.textContent='جارٍ تجهيز الصورة...';if(submit)submit.disabled=true;
+ try{const data=await imageFileToDataUrl(file);if(mode==='create')createAvatarDataUrl=data;else if(mode==='detail')detailAvatarDataUrl=data;else myProfileAvatarDataUrl=data;setAvatarPreview(cfg.preview,data,document.getElementById(cfg.name).value);if(status)status.textContent='تم تجهيز الصورة.';}
+ catch(err){if(status)status.textContent='تعذر تجهيز الصورة: '+err;input.value='';}
  finally{if(submit)submit.disabled=false;}
 }
 const permissionGroupInfo={
@@ -1101,6 +1141,39 @@ async function initializeAuth(){
  try{const result=await invoke('auth_status');if(result.setupRequired){showAuthPane(true);return;}if(result.currentUser){await finishLogin(result.currentUser);return;}showAuthPane(false);}
  catch(err){showAuthPane(false);document.getElementById('authStatus').textContent='تعذر فحص إعداد المستخدمين: '+err;}
 }
+function openMyProfile(){
+ if(!currentUser)return;
+ closeHeaderMenus();
+ myProfileAvatarDataUrl=currentUser.avatarDataUrl||null;
+ document.getElementById('myProfileForm').reset();
+ document.getElementById('myProfileDisplayName').value=currentUser.displayName||'';
+ document.getElementById('myProfileUsername').value=currentUser.username||'';
+ document.getElementById('myProfileEmail').value=currentUser.email||'';
+ document.getElementById('myProfilePhone').value=currentUser.phone||'';
+ document.getElementById('myProfileAddress').value=currentUser.address||'';
+ document.getElementById('myProfileAvatarFile').value='';
+ setAvatarPreview('myProfileAvatarPreview',myProfileAvatarDataUrl,currentUser.displayName);
+ const status=document.getElementById('myProfileStatus');status.textContent='';status.className='status';
+ document.getElementById('myProfileOverlay').hidden=false;document.getElementById('myProfileDisplayName').focus();
+}
+document.getElementById('editMyProfileBtn').addEventListener('click',openMyProfile);
+document.getElementById('cancelMyProfileBtn').addEventListener('click',()=>{document.getElementById('myProfileOverlay').hidden=true;});
+document.getElementById('myProfileAvatarFile').addEventListener('change',()=>saveAvatarFromInput('myProfileAvatarFile','self'));
+document.getElementById('clearMyProfileAvatar').addEventListener('click',()=>{myProfileAvatarDataUrl=null;document.getElementById('myProfileAvatarFile').value='';setAvatarPreview('myProfileAvatarPreview',null,document.getElementById('myProfileDisplayName').value);});
+document.getElementById('myProfileDisplayName').addEventListener('input',()=>{if(!myProfileAvatarDataUrl)setAvatarPreview('myProfileAvatarPreview',null,document.getElementById('myProfileDisplayName').value);});
+document.getElementById('myProfileForm').addEventListener('submit',async e=>{
+ e.preventDefault();if(!currentUser)return;
+ const button=document.getElementById('saveMyProfileBtn');const status=document.getElementById('myProfileStatus');button.disabled=true;status.className='status';status.textContent=currentLanguage==='en'?'Saving your profile…':'جارٍ حفظ بياناتك الشخصية…';
+ const profile={displayName:document.getElementById('myProfileDisplayName').value.trim(),email:document.getElementById('myProfileEmail').value.trim()||null,phone:document.getElementById('myProfilePhone').value.trim()||null,address:document.getElementById('myProfileAddress').value.trim()||null,avatarDataUrl:myProfileAvatarDataUrl};
+ try{
+  const result=await invoke('update_user_profile',{userId:currentUser.id,...profile});
+  Object.assign(currentUser,profile);renderHeaderUser(currentUser);
+  status.className='status status-success';status.textContent=currentLanguage==='en'?'Your profile was saved successfully.':result;
+  const userName=document.getElementById('userMenuName');if(userName)userName.textContent=currentUser.displayName;
+ }catch(err){status.className='status status-error';status.textContent=(currentLanguage==='en'?'Could not save your profile: ':'تعذر حفظ بياناتك الشخصية: ')+ (currentLanguage==='en'?localizeText(String(err)):String(err));console.error('[Madar] self profile update failed:',err);}
+ finally{button.disabled=false;}
+});
+
 document.getElementById('authSetupForm').addEventListener('submit',async e=>{
  e.preventDefault();const btn=document.getElementById('authSetupSubmit');const status=document.getElementById('authStatus');const password=document.getElementById('authSetupPassword').value;
  btn.disabled=true;status.textContent='جارٍ إنشاء حساب مدير النظام...';
@@ -1314,6 +1387,12 @@ Object.assign(arEn,{
  'حساباتك':'Your account','صورة المستخدم':'User avatar','مدير النظام':'System administrator','مدير':'Manager','مسؤول مخزن':'Warehouse operator','مبيعات':'Sales','عرض فقط':'Read only','@':'@',
  'قاعدة بيانات محلية':'Local database','قاعدة البيانات محلية، ويتم التحقق من الصلاحيات داخل أوامر التطبيق. أنشئ نسخة احتياطية بصورة دورية.':'The database is local, and permissions are checked inside application commands. Create regular backups.',
  '🏢':'🏢','🟢':'🟢','📦':'📦','🏬':'🏬','⚠️':'⚠️','🧾':'🧾','🛒':'🛒','👥':'👥','💼':'💼','🏷️':'🏷️','📈':'📈','💳':'💳','💾':'💾','🛡️':'🛡️','📋':'📋','❔':'❔','🏠':'🏠'
+});
+
+Object.assign(arEn,{
+ 'بياناتي الشخصية':'My profile','عدّل بيانات التواصل والصورة الخاصة بحسابك. لا يمكن تغيير الدور أو الصلاحيات من هنا.':'Edit your contact details and avatar. Your role and permissions cannot be changed here.',
+ 'الصورة الشخصية':'Profile picture','استخدام الصورة الافتراضية':'Use default avatar','الاسم الظاهر':'Display name','اسم المستخدم':'Username','البريد الإلكتروني':'Email address','رقم التليفون':'Phone number','العنوان':'Address','حفظ بياناتي':'Save my profile',
+ 'جارٍ حفظ بياناتك الشخصية…':'Saving your profile…','تم تجهيز الصورة.':'Image prepared.','تعذر تجهيز الصورة:':'Could not prepare image:','تعذر حفظ بياناتك الشخصية:':'Could not save your profile:'
 });
 
 function localizeText(value){

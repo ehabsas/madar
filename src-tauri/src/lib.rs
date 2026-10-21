@@ -442,6 +442,9 @@ struct UserSession {
     role_code: String,
     role_name: String,
     avatar_data_url: Option<String>,
+    email: Option<String>,
+    phone: Option<String>,
+    address: Option<String>,
     permissions: Vec<String>,
 }
 
@@ -466,9 +469,9 @@ fn write_audit(conn: &Connection, actor: Option<&UserSession>, action: &str, ent
 }
 
 fn load_user_session(conn: &Connection, user_id: i64) -> Result<UserSession, String> {
-    let (username, display_name, role_code, role_name, avatar_data_url): (String,String,String,String,Option<String>) = conn.query_row(
-        "SELECT u.username,u.display_name,r.code,r.name,u.avatar_data_url FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=?1 AND u.is_active=1",
-        [user_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)),
+    let (username, display_name, role_code, role_name, avatar_data_url, email, phone, address): (String,String,String,String,Option<String>,Option<String>,Option<String>,Option<String>) = conn.query_row(
+        "SELECT u.username,u.display_name,r.code,r.name,u.avatar_data_url,u.email,u.phone,u.address FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=?1 AND u.is_active=1",
+        [user_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?)),
     ).map_err(|_| "المستخدم غير موجود أو موقوف".to_string())?;
     let mut permissions = Vec::new();
     if role_code == "admin" {
@@ -488,7 +491,7 @@ fn load_user_session(conn: &Connection, user_id: i64) -> Result<UserSession, Str
         let rows = stmt.query_map([user_id], |r| r.get::<_,String>(0)).map_err(|e| e.to_string())?;
         for row in rows { permissions.push(row.map_err(|e| e.to_string())?); }
     }
-    Ok(UserSession { id:user_id, username, display_name, role_code, role_name, avatar_data_url, permissions })
+    Ok(UserSession { id:user_id, username, display_name, role_code, role_name, avatar_data_url, email, phone, address, permissions })
 }
 
 fn hash_password(password: &str) -> Result<String, String> {
@@ -642,7 +645,13 @@ fn create_user(app: tauri::AppHandle, state: State<'_, AppState>, username: Stri
 
 #[tauri::command]
 fn update_user_profile(app: tauri::AppHandle, state: State<'_, AppState>, user_id: i64, display_name: String, email: Option<String>, phone: Option<String>, address: Option<String>, avatar_data_url: Option<String>) -> Result<String, String> {
-    let actor = require_permission(state.inner(), "users.profile.edit")?;
+    let actor = {
+        let guard = state.session.lock().map_err(|_| "تعذر الوصول إلى جلسة المستخدم")?;
+        guard.as_ref().cloned().ok_or_else(|| "يلزم تسجيل الدخول أولًا".to_string())?
+    };
+    if user_id != actor.id && !actor.permissions.iter().any(|p| p == "users.profile.edit") {
+        return Err("ليس لديك صلاحية تعديل بيانات مستخدم آخر".into());
+    }
     let display_name = display_name.trim();
     if display_name.is_empty() { return Err("الاسم الظاهر مطلوب".into()); }
     if display_name.chars().count() > 120 { return Err("الاسم الظاهر طويل جدًا (الحد 120 حرفًا)".into()); }
@@ -660,7 +669,13 @@ fn update_user_profile(app: tauri::AppHandle, state: State<'_, AppState>, user_i
     tx.commit().map_err(|e| e.to_string())?;
     if user_id == actor.id {
         if let Ok(mut guard) = state.session.lock() {
-            if let Some(ref mut session) = *guard { session.display_name = display_name.to_string(); session.avatar_data_url = avatar_data_url.clone(); }
+            if let Some(ref mut session) = *guard {
+                session.display_name = display_name.to_string();
+                session.avatar_data_url = avatar_data_url.clone();
+                session.email = email.clone();
+                session.phone = phone.clone();
+                session.address = address.clone();
+            }
         }
     }
     Ok(format!("تم حفظ بيانات المستخدم {username}"))
@@ -846,6 +861,20 @@ struct ProductRow {
     purchase_price_minor: i64, sale_price_minor: i64,
 }
 
+fn validate_barcode(value: &str) -> Result<String, String> {
+    let barcode = value.trim();
+    if barcode.is_empty() {
+        return Err("الباركود لا يمكن أن يكون فارغًا".into());
+    }
+    if barcode.chars().count() > 128 {
+        return Err("الباركود أطول من الحد المسموح (128 حرفًا)".into());
+    }
+    if barcode.chars().any(char::is_control) {
+        return Err("الباركود يحتوي على محارف تحكم غير مسموح بها. الصق قيمة الباركود فقط دون أسطر جديدة.".into());
+    }
+    Ok(barcode.to_string())
+}
+
 fn next_internal_barcode(conn: &Connection) -> Result<String, String> {
     // Internal Code 128-friendly barcode. It is unique within Madar, not a GS1 retail GTIN.
     let mut n: i64 = conn.query_row(
@@ -880,7 +909,7 @@ fn create_product(app: tauri::AppHandle, state: State<'_, AppState>, code: Strin
     let unit_value = unit.unwrap_or_else(|| "قطعة".to_string());
     let supplied = barcode.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     let (barcode_value, barcode_type) = match supplied {
-        Some(value) => (value, "legacy"),
+        Some(value) => (validate_barcode(&value)?, "legacy"),
         None => {
             let generated = next_internal_barcode(&tx)?;
             (generated, "internal")
@@ -1005,7 +1034,7 @@ fn update_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, co
     let code = code.trim();
     let name = name.trim();
     let unit = unit.trim();
-    let barcode = barcode.trim();
+    let barcode = validate_barcode(&barcode)?;
     if code.is_empty() || name.is_empty() || unit.is_empty() {
         return Err("الكود والاسم والوحدة حقول مطلوبة".into());
     }
@@ -1051,11 +1080,11 @@ fn update_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, co
         [id], |r| Ok((r.get(0)?, r.get(1)?))
     ).optional().map_err(|e| format!("تعذر قراءة الباركود الأساسي الحالي: {e}"))?;
     let previous_barcode = current_primary.as_ref().map(|(_, value)| value.as_str().to_owned()).unwrap_or_default();
-    let barcode_changed = previous_barcode != barcode;
+    let barcode_changed = previous_barcode.as_str() != barcode.as_str();
 
     // Validate ownership before modifying any primary flag. The transaction protects all changes as one unit.
     let mut target_barcode_row: Option<i64> = current_primary.as_ref().and_then(|(row_id, current)| {
-        if current.as_str() == barcode { Some(*row_id) } else { None }
+        if current.as_str() == barcode.as_str() { Some(*row_id) } else { None }
     });
     if barcode_changed {
         if !actor.permissions.iter().any(|p| p == "products.barcode.manage") {
@@ -1063,7 +1092,7 @@ fn update_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, co
         }
         let existing: Option<(i64, i64)> = tx.query_row(
             "SELECT id,product_id FROM product_barcodes WHERE barcode=?1 LIMIT 1",
-            [barcode], |r| Ok((r.get(0)?, r.get(1)?))
+            [barcode.as_str()], |r| Ok((r.get(0)?, r.get(1)?))
         ).optional().map_err(|e| format!("تعذر التحقق من الباركود: {e}"))?;
         if let Some((row_id, owner_id)) = existing {
             if owner_id != id {
@@ -1128,11 +1157,10 @@ fn add_alternate_barcode(app: tauri::AppHandle, state: State<'_, AppState>, prod
     initialize_database(&path)?;
     let mut conn = connect(&path)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let barcode = barcode.trim();
-    if barcode.is_empty() { return Err("أدخل الباركود البديل أولًا".into()); }
+    let barcode = validate_barcode(&barcode)?;
     let product_unit: Option<String> = tx.query_row("SELECT unit FROM products WHERE id=?1 AND is_active=1", [product_id], |r| r.get(0)).optional().map_err(|e| e.to_string())?;
     let Some(product_unit) = product_unit else { return Err("الصنف غير موجود أو موقوف".into()); };
-    let duplicate: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM product_barcodes WHERE barcode=?1)", [barcode], |r| r.get(0)).map_err(|e| e.to_string())?;
+    let duplicate: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM product_barcodes WHERE barcode=?1)", [barcode.as_str()], |r| r.get(0)).map_err(|e| e.to_string())?;
     if duplicate { return Err("هذا الباركود مستخدم بالفعل، ولن يتم ربطه بصنف آخر".into()); }
     let unit = unit.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).unwrap_or(product_unit);
     tx.execute("INSERT INTO product_barcodes(product_id,unit,barcode,barcode_type,is_primary) VALUES (?1,?2,?3,'alternate',0)", params![product_id,unit,barcode]).map_err(|e| e.to_string())?;
