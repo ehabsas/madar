@@ -418,6 +418,7 @@ struct UserSession {
     display_name: String,
     role_code: String,
     role_name: String,
+    avatar_data_url: Option<String>,
     permissions: Vec<String>,
 }
 
@@ -442,9 +443,9 @@ fn write_audit(conn: &Connection, actor: Option<&UserSession>, action: &str, ent
 }
 
 fn load_user_session(conn: &Connection, user_id: i64) -> Result<UserSession, String> {
-    let (username, display_name, role_code, role_name): (String,String,String,String) = conn.query_row(
-        "SELECT u.username,u.display_name,r.code,r.name FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=?1 AND u.is_active=1",
-        [user_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
+    let (username, display_name, role_code, role_name, avatar_data_url): (String,String,String,String,Option<String>) = conn.query_row(
+        "SELECT u.username,u.display_name,r.code,r.name,u.avatar_data_url FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=?1 AND u.is_active=1",
+        [user_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)),
     ).map_err(|_| "المستخدم غير موجود أو موقوف".to_string())?;
     let mut permissions = Vec::new();
     if role_code == "admin" {
@@ -464,7 +465,7 @@ fn load_user_session(conn: &Connection, user_id: i64) -> Result<UserSession, Str
         let rows = stmt.query_map([user_id], |r| r.get::<_,String>(0)).map_err(|e| e.to_string())?;
         for row in rows { permissions.push(row.map_err(|e| e.to_string())?); }
     }
-    Ok(UserSession { id:user_id, username, display_name, role_code, role_name, permissions })
+    Ok(UserSession { id:user_id, username, display_name, role_code, role_name, avatar_data_url, permissions })
 }
 
 fn hash_password(password: &str) -> Result<String, String> {
@@ -636,7 +637,7 @@ fn update_user_profile(app: tauri::AppHandle, state: State<'_, AppState>, user_i
     tx.commit().map_err(|e| e.to_string())?;
     if user_id == actor.id {
         if let Ok(mut guard) = state.session.lock() {
-            if let Some(ref mut session) = *guard { session.display_name = display_name.to_string(); }
+            if let Some(ref mut session) = *guard { session.display_name = display_name.to_string(); session.avatar_data_url = avatar_data_url.clone(); }
         }
     }
     Ok(format!("تم حفظ بيانات المستخدم {username}"))
@@ -896,6 +897,25 @@ fn search_products_db(conn: &Connection, query: &str, is_active: bool) -> Result
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map(params![if is_active { 1 } else { 0 }, q, like], |r| Ok(ProductRow { id:r.get(0)?, code:r.get(1)?, name:r.get(2)?, unit:r.get(3)?, barcode:r.get(4)?, purchase_price_minor:r.get(5)?, sale_price_minor:r.get(6)? })).map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_dashboard_inventory_counts(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    // Return aggregate counts only for sections this signed-in user may view.
+    let actor = {
+        let guard = state.session.lock().map_err(|_| "تعذر الوصول إلى جلسة المستخدم")?;
+        guard.as_ref().ok_or_else(|| "يلزم تسجيل الدخول أولًا".to_string())?.clone()
+    };
+    let path = database_path(&app)?;
+    initialize_database(&path)?;
+    let conn = connect(&path)?;
+    let product_count = if actor.permissions.iter().any(|p| p == "products.view") {
+        Some(conn.query_row("SELECT COUNT(*) FROM products WHERE is_active=1", [], |r| r.get::<_,i64>(0)).map_err(|e| e.to_string())?)
+    } else { None };
+    let in_stock_product_count = if actor.permissions.iter().any(|p| p == "stock.view") {
+        Some(conn.query_row("SELECT COUNT(*) FROM products p WHERE p.is_active=1 AND (SELECT COALESCE(SUM(sm.quantity_milli),0) FROM stock_movements sm WHERE sm.product_id=p.id)>0", [], |r| r.get::<_,i64>(0)).map_err(|e| e.to_string())?)
+    } else { None };
+    Ok(serde_json::json!({"productCount":product_count,"inStockProductCount":in_stock_product_count}))
 }
 
 #[tauri::command]
@@ -1235,6 +1255,23 @@ fn set_party_active(app: tauri::AppHandle, state: State<'_, AppState>, entity_ty
     write_audit(&tx,Some(&actor),action,table,Some(&id.to_string()),&format!("name={name}"))?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(format!("تم {} {}: {name}", if active {"تفعيل"} else {"إيقاف"}, if table=="customers" {"العميل"} else {"المورد"}))
+}
+
+#[tauri::command]
+fn get_company_branding(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<serde_json::Value,String> {
+    // Brand identity is visible to every signed-in user, while contact/tax details remain protected.
+    let _user = {
+        let guard = state.session.lock().map_err(|_| "تعذر الوصول إلى جلسة المستخدم")?;
+        guard.as_ref().ok_or_else(|| "يلزم تسجيل الدخول أولًا".to_string())?.clone()
+    };
+    let path = database_path(&app)?;
+    initialize_database(&path)?;
+    let conn = connect(&path)?;
+    let read = |key: &str| -> Result<String,String> {
+        conn.query_row("SELECT value FROM app_settings WHERE key=?1", [key], |row| row.get(0))
+            .optional().map(|value: Option<String>| value.unwrap_or_default()).map_err(|e| e.to_string())
+    };
+    Ok(serde_json::json!({"name":read("company_name")?,"logoDataUrl":read("company_logo_data_url")?,"currencyCode":read("currency_code")?}))
 }
 
 #[tauri::command]
@@ -1839,7 +1876,7 @@ pub fn run() {
             initialize_database(&path).map_err(std::io::Error::other)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![app_info, auth_status, create_initial_admin, login, logout, list_users, create_user, update_user_profile, set_user_active, set_user_role, list_user_permissions, set_user_permissions, reset_user_password, change_own_password, list_audit_log, create_product, find_product_by_barcode, list_products, search_products, list_inactive_products, search_inactive_products, reactivate_product, update_product, add_alternate_barcode, deactivate_product, list_stock, list_stock_movements, record_stock_movement, list_parties, save_party, set_party_active, get_company_profile, save_company_profile, list_payable_invoices, record_payment, list_payments, cashbox_adjustment, list_cashbook, get_financial_summary, list_quotations, get_quotation_details, save_quotation, set_quotation_status, convert_quotation_to_sale, list_invoices, get_invoice_details, create_invoice, update_invoice_draft, post_invoice, cancel_invoice, create_backup, list_restore_points, delete_restore_point, restore_backup])
+        .invoke_handler(tauri::generate_handler![app_info, auth_status, create_initial_admin, login, logout, list_users, create_user, update_user_profile, set_user_active, set_user_role, list_user_permissions, set_user_permissions, reset_user_password, change_own_password, list_audit_log, create_product, find_product_by_barcode, get_dashboard_inventory_counts, list_products, search_products, list_inactive_products, search_inactive_products, reactivate_product, update_product, add_alternate_barcode, deactivate_product, list_stock, list_stock_movements, record_stock_movement, list_parties, save_party, set_party_active, get_company_branding, get_company_profile, save_company_profile, list_payable_invoices, record_payment, list_payments, cashbox_adjustment, list_cashbook, get_financial_summary, list_quotations, get_quotation_details, save_quotation, set_quotation_status, convert_quotation_to_sale, list_invoices, get_invoice_details, create_invoice, update_invoice_draft, post_invoice, cancel_invoice, create_backup, list_restore_points, delete_restore_point, restore_backup])
         .run(tauri::generate_context!())
         .expect("خطأ أثناء تشغيل مدار");
 }
