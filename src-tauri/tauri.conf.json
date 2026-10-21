@@ -10,11 +10,12 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "مدار | نظام إدارة الأعمال",
+        "title": "Madar | Business Management System",
         "width": 1280,
         "height": 800,
         "minWidth": 960,
-        "minHeight": 640
+        "minHeight": 640,
+        "fullscreen": true
       }
     ],
     "security": {
