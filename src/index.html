@@ -365,6 +365,14 @@ html[dir="rtl"] .brand .mark:after{content:'م'}
  </section>
 </div>
 <script>
+// Disable WebKitGTK's native right-click context menu. On Linux this menu
+// queries GTK clipboard targets to determine whether Paste is available; that
+// path matches the reported crash inside WebKit::Clipboard::formats when the
+// system clipboard is empty or reports no targets. Keyboard shortcuts remain
+// available.
+window.addEventListener('contextmenu', function(event) {
+  event.preventDefault();
+}, { capture: true });
 // Navigation: show one section at a time without reloading the app.
 function showPage(page){const required={'products':'products.view','stock':'stock.view','users':'users.view','audit':'audit.view','purchaseInvoices':'purchases.view','salesInvoices':'sales.view','quotations':'quotations.view','finance':'finance.view','reports':'reports.view'}[page];const backupPermissions=['backup.view_points','backup.create','backup.restore','backup.points.delete'];const allowed=page==='companySettings'?(!!currentUser&&['company.settings.view','company.settings.manage'].some(p=>currentUser.permissions.includes(p))):page==='backup'?(!!currentUser&&backupPermissions.some(p=>currentUser.permissions.includes(p))):page==='parties'?(!!currentUser&&['customers.view','suppliers.view'].some(p=>currentUser.permissions.includes(p))):(!required||(!!currentUser&&currentUser.permissions.includes(required)));if(!allowed){statusEl.textContent=currentLanguage==='en'?'You do not have permission to open this section.':'ليس لديك صلاحية لفتح هذا القسم.';return;}document.querySelectorAll('[data-page-content]').forEach(el=>{el.hidden=el.dataset.pageContent!==page;});document.querySelectorAll('.nav-btn').forEach(el=>{const active=el.dataset.page===page;el.classList.toggle('active',active);if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});if(page==='products')setTimeout(()=>document.getElementById('productSearch')?.focus(),0);if(page==='stock')refreshStock(undefined,true);if(page==='parties')loadParties();if(page==='purchaseInvoices')loadInvoices('purchase');if(page==='salesInvoices')loadInvoices('sale');if(page==='quotations')loadQuotations();if(page==='finance')loadFinance();if(page==='reports')refreshReports();if(page==='companySettings')loadCompanyProfile();if(page==='dashboard')refreshDashboard();}
 document.querySelectorAll('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>showPage(btn.dataset.page)));

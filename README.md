@@ -208,3 +208,7 @@ cargo run
 - Each saved invoice/quotation stores a tax-rate and tax-mode snapshot; existing saved documents are not retroactively recalculated when company settings change. Editing a draft recalculates it using the current settings.
 - Viewing company settings requires `company.settings.view` or `company.settings.manage`; changing settings requires `company.settings.manage`. The Rust commands enforce these checks independently of UI visibility.
 - Invoice/quotation printing loads the company profile through a separate command that checks the relevant `sales.view`, `purchases.view`, or `quotations.view` permission.
+
+## Linux clipboard / WebKitGTK note
+
+The application disables WebKitGTK's built-in right-click context menu. The native menu checks clipboard targets when determining whether Paste is available, which matched the reported crash stack in `WebKit::Clipboard::formats` / GTK `request_targets_received_func`. Keyboard copy/paste shortcuts are not intentionally disabled. If a keyboard paste still triggers a process-level SIGSEGV, inspect the installed `webkit2gtk4.1` package and update Fedora packages; a web UI cannot recover from a native WebKitGTK segmentation fault.
