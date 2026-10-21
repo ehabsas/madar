@@ -109,16 +109,17 @@ CREATE TABLE IF NOT EXISTS sale_items (
 CREATE TABLE IF NOT EXISTS roles (id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, is_system INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS permissions (code TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS role_permissions (role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE, permission_code TEXT NOT NULL REFERENCES permissions(code) ON DELETE CASCADE, PRIMARY KEY(role_id,permission_code));
-CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE COLLATE NOCASE, display_name TEXT NOT NULL, password_hash TEXT NOT NULL, role_id INTEGER NOT NULL REFERENCES roles(id), is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0,1)), created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), last_login_at TEXT);
+CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE COLLATE NOCASE, display_name TEXT NOT NULL, password_hash TEXT NOT NULL, role_id INTEGER NOT NULL REFERENCES roles(id), is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0,1)), created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), last_login_at TEXT, email TEXT, phone TEXT, address TEXT, avatar_data_url TEXT);
 CREATE TABLE IF NOT EXISTS user_permission_overrides (user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, permission_code TEXT NOT NULL REFERENCES permissions(code) ON DELETE CASCADE, allowed INTEGER NOT NULL CHECK(allowed IN (0,1)), PRIMARY KEY(user_id,permission_code));
 CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT, details TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), actor_user_id INTEGER, actor_username TEXT);
+CREATE INDEX IF NOT EXISTS idx_audit_log_filters ON audit_log(entity_type, action, id DESC);
 
 
 INSERT OR IGNORE INTO warehouses(code,name) VALUES ('MAIN', 'المخزن الرئيسي');
 
 INSERT OR IGNORE INTO app_settings(key, value) VALUES
 ('app_name', 'مدار'),
-('database_schema_version', '6'),
+('database_schema_version', '7'),
 ('barcode_prefix', 'MAD'),
 ('barcode_auto_generate', 'true'),
 ('backup_reminder_enabled', 'true');
