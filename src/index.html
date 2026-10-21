@@ -535,6 +535,11 @@ let activeDetailUser=null;
 let createAvatarDataUrl=null;
 let detailAvatarDataUrl=null;
 const roleLabels={admin:'مدير النظام',manager:'مدير',warehouse:'مسؤول مخزن',sales:'مبيعات',viewer:'عرض فقط'};
+const roleLabelsEn={admin:'System administrator',manager:'Manager',warehouse:'Warehouse operator',sales:'Sales',viewer:'Read only'};
+function localizedRoleLabel(code,fallback=''){
+ if(currentLanguage==='en')return roleLabelsEn[code]||(fallback?localizeText(fallback):'');
+ return roleLabels[code]||fallback||'';
+}
 const DEFAULT_AVATAR_SVG='<svg viewBox="0 0 64 64" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="32" cy="22" r="12" fill="currentColor"/><path d="M8 58c1-13 10-21 24-21s23 8 24 21" fill="currentColor"/></svg>';
 function avatarMarkup(user){
  const url=typeof user?.avatarDataUrl==='string'&&/^data:image\/(png|jpeg|webp);base64,/.test(user.avatarDataUrl)?user.avatarDataUrl:null;
@@ -570,7 +575,7 @@ async function loadUsers(){
    const customization=u.permissionOverrides>0?`<small class="permission-source">${u.permissionOverrides} استثناءات فردية</small>`:'<small class="muted">حسب الدور</small>';
    const detailButton=`<button class="btn secondary small-btn view-user-details" data-id="${u.id}" type="button">عرض التفاصيل</button>`;
    const permissionButton=(currentUser.roleCode==='admin'&&currentUser.permissions.includes('users.permissions.manage')&&u.roleCode!=='admin'&&u.id!==currentUser.id)?`<button class="btn secondary small-btn edit-user-permissions" data-id="${u.id}" data-name="${escapeHtml(u.username)}" data-role="${escapeHtml(u.roleCode)}" type="button">الصلاحيات</button>`:'';
-   return `<tr><td><div class="avatar-cell">${avatarMarkup(u)}<div><strong>${escapeHtml(u.displayName)}</strong><div class="muted"><code>${escapeHtml(u.username)}</code></div></div></div></td><td>${escapeHtml(roleLabels[u.roleCode]||u.roleName)}<div>${customization}</div></td><td><span class="pill">${u.isActive?'نشط':'موقوف'}</span></td><td>${escapeHtml(u.lastLoginAt||'لم يسجل الدخول بعد')}</td><td><div class="table-actions">${detailButton}${permissionButton}</div></td></tr>`;
+   return `<tr><td><div class="avatar-cell">${avatarMarkup(u)}<div><strong>${escapeHtml(u.displayName)}</strong><div class="muted"><code>${escapeHtml(u.username)}</code></div></div></div></td><td>${escapeHtml(localizedRoleLabel(u.roleCode,u.roleName))}<div>${customization}</div></td><td><span class="pill">${u.isActive?'نشط':'موقوف'}</span></td><td>${escapeHtml(u.lastLoginAt||'لم يسجل الدخول بعد')}</td><td><div class="table-actions">${detailButton}${permissionButton}</div></td></tr>`;
   }).join('')||'<tr><td colspan="5" class="muted">لا يوجد مستخدمون.</td></tr>';
   applyElementPermissions();
   document.querySelectorAll('.view-user-details').forEach(btn=>btn.addEventListener('click',()=>openUserDetail(Number(btn.dataset.id))));
@@ -594,7 +599,7 @@ function openUserDetail(userId){
  document.getElementById('detailEmail').value=user.email||'';document.getElementById('detailPhone').value=user.phone||'';document.getElementById('detailAddress').value=user.address||'';
  document.getElementById('detailRole').value=user.roleCode;document.getElementById('detailNewPassword').value='';
  document.getElementById('detailDisplayHeading').textContent=user.displayName||user.username;
- document.getElementById('detailMetaHeading').textContent=`${user.username} · ${roleLabels[user.roleCode]||user.roleName}`;
+ document.getElementById('detailMetaHeading').textContent=`${user.username} · ${localizedRoleLabel(user.roleCode,user.roleName)}`;
  setAvatarPreview('detailUserAvatarPreview',detailAvatarDataUrl,user.displayName);
  const canProfile=currentUser.permissions.includes('users.profile.edit');
  ['detailDisplayName','detailEmail','detailPhone','detailAddress'].forEach(id=>document.getElementById(id).disabled=!canProfile);
@@ -734,8 +739,8 @@ document.getElementById('userDetailForm').addEventListener('submit',async e=>{
  e.preventDefault();if(!activeDetailUser)return;const status=document.getElementById('detailUserStatus');const button=document.getElementById('saveUserProfile');button.disabled=true;
  try{const result=await invoke('update_user_profile',{userId:activeDetailUser.id,displayName:document.getElementById('detailDisplayName').value,email:document.getElementById('detailEmail').value.trim()||null,phone:document.getElementById('detailPhone').value.trim()||null,address:document.getElementById('detailAddress').value.trim()||null,avatarDataUrl:detailAvatarDataUrl});
   await loadUsers();activeDetailUser=userRowsCache.find(u=>u.id===activeDetailUser.id)||activeDetailUser;
-  document.getElementById('detailDisplayHeading').textContent=activeDetailUser.displayName;document.getElementById('detailMetaHeading').textContent=`${activeDetailUser.username} · ${roleLabels[activeDetailUser.roleCode]||activeDetailUser.roleName}`;
-  if(currentUser.id===activeDetailUser.id){document.getElementById('currentUserBadge').textContent=`${activeDetailUser.displayName} — ${roleLabels[currentUser.roleCode]||currentUser.roleName}`;currentUser.displayName=activeDetailUser.displayName;}
+  document.getElementById('detailDisplayHeading').textContent=activeDetailUser.displayName;document.getElementById('detailMetaHeading').textContent=`${activeDetailUser.username} · ${localizedRoleLabel(activeDetailUser.roleCode,activeDetailUser.roleName)}`;
+  if(currentUser.id===activeDetailUser.id){document.getElementById('currentUserBadge').textContent=`${activeDetailUser.displayName} — ${localizedRoleLabel(currentUser.roleCode,currentUser.roleName)}`;currentUser.displayName=activeDetailUser.displayName;}
   status.textContent=result;await loadAuditLog('');
  }catch(err){status.textContent='تعذر حفظ بيانات المستخدم: '+err;}
  finally{button.disabled=false;}
