@@ -11,10 +11,18 @@ header{position:sticky;top:0;z-index:100;background:#14243b;color:white;padding:
 </style></head><body>
 <header><div class="brand"><div class="mark">م</div><div><h1>مدار</h1><p>نظام إدارة المبيعات والمخازن والحسابات</p></div></div><div class="header-actions"><span class="pill">نسخة تطوير 0.2.0</span><button id="themeToggle" class="theme-btn" type="button" aria-label="تبديل الوضع اللوني">🌙 الوضع الداكن</button></div></header>
 <div class="app-layout"><aside class="sidebar" aria-label="القائمة الرئيسية"><div class="nav-label">القائمة الرئيسية</div><nav class="nav-list"><button class="nav-btn active" data-page="dashboard" type="button"><span class="nav-icon">⌂</span><span class="nav-text">الرئيسية</span></button><button class="nav-btn" data-page="products" type="button"><span class="nav-icon">▦</span><span class="nav-text">المنتجات</span></button><button class="nav-btn" data-page="backup" type="button"><span class="nav-icon">⤓</span><span class="nav-text">النسخ الاحتياطي</span></button><button class="nav-btn" data-page="help" type="button"><span class="nav-icon">ⓘ</span><span class="nav-text">المساعدة</span></button></nav></aside><main class="main-content"><section class="page" data-page-content="dashboard"><div class="page-title"><h2>لوحة التحكم</h2><p>نظرة سريعة على مدار، مع وصول مباشر للأقسام الأساسية.</p></div><div class="stats-grid"><article class="stat-card"><div class="stat-label">الأصناف المسجلة</div><div class="stat-value" id="dashboardProductCount">—</div></article><article class="stat-card"><div class="stat-label">حالة قاعدة البيانات</div><div class="stat-value" style="font-size:20px">محلية</div></article><article class="stat-card"><div class="stat-label">نظام الباركود</div><div class="stat-value" style="font-size:20px">مفعّل</div></article></div><section class="panel"><h2>اختصارات سريعة</h2><p class="muted">اختار القسم اللي عايز تشتغل فيه.</p><div class="quick-actions"><button class="btn" type="button" data-go-page="products">إدارة المنتجات</button><button class="btn secondary" type="button" data-go-page="backup">النسخ الاحتياطي والاستعادة</button><button class="btn secondary" type="button" data-go-page="help">المساعدة وقواعد الباركود</button></div></section><section class="panel"><h2>حالة النظام</h2><p class="muted">يعمل مدار بقاعدة بيانات SQLite محلية. احرص على إنشاء نسخة احتياطية دورية قبل أي تغييرات كبيرة على البيانات.</p></section></section>
-<section class="page" data-page-content="products" hidden><div class="page-title"><h2>المنتجات</h2><p>إضافة الأصناف ومراجعة الأصناف المسجلة.</p></div><section class="panel"><h2>إضافة صنف تجريبية</h2><p class="muted">هذه الواجهة مرتبطة بأوامر Rust داخل التطبيق؛ الأسعار تحفظ كأعداد صحيحة بوحدة العملة الصغرى لتجنب أخطاء الكسور العشرية.</p>
-<form id="productForm"><div class="grid"><label class="field">كود الصنف<input id="code" required placeholder="مثال: P-1001"/></label><label class="field">اسم الصنف<input id="name" required placeholder="اسم الصنف"/></label><label class="field">الوحدة<input id="unit" value="قطعة" required/></label><label class="field">الباركود الحالي (اختياري)<input id="barcode" placeholder="اتركه فارغًا للتوليد التلقائي"/></label><label class="field">سعر الشراء<input id="purchase" type="number" min="0" step="0.01" value="0" required/></label><label class="field">سعر البيع<input id="sale" type="number" min="0" step="0.01" value="0" required/></label></div><div class="actions"><button class="btn" type="submit">حفظ الصنف وتوليد الباركود</button><button class="btn secondary" id="refresh" type="button">تحديث القائمة</button></div><div class="status muted" id="status" role="status"></div></form></section><section class="panel"><h2>الأصناف المسجلة</h2><div class="tablewrap"><table><thead><tr><th>الكود</th><th>اسم الصنف</th><th>الوحدة</th><th>الباركود</th><th>سعر البيع</th></tr></thead><tbody id="products"><tr><td colspan="5" class="muted">شغّل التطبيق لتحميل البيانات.</td></tr></tbody></table></div></section></section>
+<section class="page" data-page-content="products" hidden><div class="page-title"><h2>المنتجات</h2><p>إضافة الأصناف والبحث فيها وتعديلها وإيقافها بأمان.</p></div><section class="panel"><h2>إضافة صنف جديد</h2><p class="muted">الأسعار تحفظ بدقة. إذا تركت الباركود فارغًا، ينشئ مدار باركودًا داخليًا تلقائيًا.</p>
+<form id="productForm"><div class="grid"><label class="field">كود الصنف<input id="code" required placeholder="مثال: P-1001"/></label><label class="field">اسم الصنف<input id="name" required placeholder="اسم الصنف"/></label><label class="field">الوحدة<input id="unit" value="قطعة" required/></label><label class="field">الباركود الأساسي (اختياري)<input id="barcode" placeholder="باركود موجود أو اتركه للتوليد" autocomplete="off"/></label><label class="field">سعر الشراء<input id="purchase" type="number" min="0" step="0.01" value="0" required/></label><label class="field">سعر البيع<input id="sale" type="number" min="0" step="0.01" value="0" required/></label></div><div class="actions"><button class="btn" type="submit">حفظ الصنف</button><button class="btn secondary" id="refresh" type="button">تحديث القائمة</button></div><div class="status muted" id="status" role="status" aria-live="polite"></div></form></section><section class="panel"><h2>البحث وإدارة الأصناف</h2><div class="actions" style="margin-top:0;margin-bottom:14px"><button class="btn secondary" id="productViewToggle" type="button">عرض الأصناف الموقوفة</button></div><p class="muted" id="productViewHelp">أنت تعرض الأصناف النشطة. الأصناف التي توقفها لا تُحذف، ويمكنك العثور عليها من زر «عرض الأصناف الموقوفة» وإعادة تفعيلها في أي وقت.</p><label class="field">بحث بالاسم أو الكود أو الباركود — استخدم قارئ الباركود هنا<input id="productSearch" type="search" placeholder="امسح الباركود أو اكتب اسم الصنف / الكود" autocomplete="off"/></label><p class="muted">الباركود يُعامل كنص للحفاظ على الأصفار في بدايته. عند التعديل لا يتغير الباركود الأساسي، ويمكن إضافة باركودات بديلة.</p><div class="tablewrap"><table><thead><tr><th>الكود</th><th>اسم الصنف</th><th>الوحدة</th><th>الباركود الأساسي</th><th>سعر الشراء</th><th>سعر البيع</th><th>الإجراءات</th></tr></thead><tbody id="products"><tr><td colspan="7" class="muted">شغّل التطبيق لتحميل البيانات.</td></tr></tbody></table></div></section></section>
 <section class="page" data-page-content="backup" hidden><div class="page-title"><h2>النسخ الاحتياطي والاستعادة</h2><p>إدارة نسخ قاعدة البيانات ونقاط الاستعادة بأمان.</p></div><section class="panel"><h2>النسخ الاحتياطي واستعادة البيانات</h2><p class="muted">أنشئ نسخة احتياطية في المكان الذي تختاره. وعند الاستعادة، يحفظ مدار نسخة تلقائية من الوضع الحالي قبل التغيير، وتظهر هذه النسخ في قائمة نقاط الاستعادة بالأسفل حتى تتمكن من الرجوع إليها بضغطة واحدة.</p><div class="actions"><button class="btn" id="backupBtn" type="button">إنشاء نسخة احتياطية إلى ملف</button><button class="btn secondary" id="restoreBtn" type="button">استعادة من ملف خارجي</button><button class="btn secondary" id="refreshRestorePoints" type="button">تحديث نقاط الاستعادة</button></div><div class="status muted" id="backupStatus" role="status" aria-live="polite"></div><h3>نقاط الاستعادة المحفوظة داخل مدار</h3><p class="muted">هذه نسخ الأمان التلقائية التي أنشأها مدار قبل عمليات الاستعادة السابقة، مرتبة من الأحدث إلى الأقدم.</p><div id="restorePoints" class="restore-list"><div class="restore-empty muted">جارٍ تحميل نقاط الاستعادة...</div></div></section></section>
 <section class="page" data-page-content="help" hidden><div class="page-title"><h2>المساعدة</h2><p>معلومات أساسية عن مدار وقواعد استخدام الباركود.</p></div><section class="panel"><h2>أهلًا بك في مدار</h2><p class="muted">تطبيق مكتبي محلي بقاعدة SQLite. كل صنف جديد يحصل على باركود أساسي تلقائيًا إذا لم تدخل باركودًا موجودًا.</p><span class="pill">الباركود فريد ولا يتكرر</span> <span class="pill">دعم قارئ الباركود USB كإدخال لوحة مفاتيح</span></section><section class="panel"><h2>قواعد الباركود</h2><ul class="muted"><li>نحافظ على الباركود القديم إذا كان موجودًا وفريدًا.</li><li>لو مش موجود، يُنشأ باركود داخلي بصيغة MAD متوافق مع الطباعة عبر Code 128.</li><li>يمكن لاحقًا إضافة باركودات متعددة للصنف حسب العبوة أو الوحدة.</li><li>الباركود الداخلي لا يُعد رقم GTIN عالميًا ولا يُستخدم كبديل لباركود تجاري مسجل.</li></ul></section></section></main></div><footer>مدار © 2026 — نسخة تطوير أولية، يلزم بناؤها واختبارها قبل الاستخدام الفعلي.</footer>
+<div id="editProductOverlay" class="confirm-overlay" hidden><section class="confirm-box" role="dialog" aria-modal="true" aria-labelledby="editProductTitle"><h3 id="editProductTitle">تعديل الصنف</h3><p class="muted">سيتم الحفاظ على الباركود الأساسي الحالي.</p><form id="editProductForm"><input type="hidden" id="editId"/><div class="grid"><label class="field">كود الصنف<input id="editCode" required/></label><label class="field">اسم الصنف<input id="editName" required/></label><label class="field">الوحدة<input id="editUnit" required/></label><label class="field">سعر الشراء<input id="editPurchase" type="number" min="0" step="0.01" required/></label><label class="field">سعر البيع<input id="editSale" type="number" min="0" step="0.01" required/></label></div><div class="confirm-actions"><button class="btn" type="submit" id="saveProductChanges">حفظ التعديلات</button><button class="btn secondary" id="cancelProductEdit" type="button">إلغاء</button></div><div id="editProductStatus" class="status muted" role="status"></div></form></section></div>
+<div id="productActionOverlay" class="confirm-overlay" hidden>
+ <section class="confirm-box" role="dialog" aria-modal="true" aria-labelledby="productActionTitle" aria-describedby="productActionMessage">
+  <h3 id="productActionTitle">تأكيد الإجراء</h3>
+  <p id="productActionMessage"></p>
+  <div class="confirm-actions"><button class="btn danger" id="productActionOk" type="button">نعم، نفّذ</button><button class="btn secondary" id="productActionCancel" type="button">إلغاء</button></div>
+ </section>
+</div>
 <div id="restoreConfirmOverlay" class="confirm-overlay" hidden>
  <section class="confirm-box" role="dialog" aria-modal="true" aria-labelledby="restoreConfirmTitle" aria-describedby="restoreConfirmMessage">
   <h3 id="restoreConfirmTitle">تأكيد استعادة البيانات</h3>
@@ -24,7 +32,7 @@ header{position:sticky;top:0;z-index:100;background:#14243b;color:white;padding:
 </div>
 <script>
 // Navigation: show one section at a time without reloading the app.
-function showPage(page){document.querySelectorAll('[data-page-content]').forEach(el=>{el.hidden=el.dataset.pageContent!==page;});document.querySelectorAll('.nav-btn').forEach(el=>{const active=el.dataset.page===page;el.classList.toggle('active',active);if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});}
+function showPage(page){document.querySelectorAll('[data-page-content]').forEach(el=>{el.hidden=el.dataset.pageContent!==page;});document.querySelectorAll('.nav-btn').forEach(el=>{const active=el.dataset.page===page;el.classList.toggle('active',active);if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});if(page==='products')setTimeout(()=>document.getElementById('productSearch')?.focus(),0);}
 document.querySelectorAll('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>showPage(btn.dataset.page)));
 document.querySelectorAll('[data-go-page]').forEach(btn=>btn.addEventListener('click',()=>showPage(btn.dataset.goPage)));
 // Theme preference is saved locally on this device.
@@ -37,11 +45,101 @@ themeToggle.addEventListener('click',()=>{const next=document.documentElement.da
 const invoke = window.__TAURI__?.core?.invoke;
 const statusEl=document.getElementById('status');
 const money=n=>(Number(n||0)/100).toFixed(2);
-async function refreshProducts(){if(!invoke){statusEl.textContent='واجهة المعاينة فقط: افتح المشروع داخل تطبيق Tauri لتفعيل حفظ البيانات.';return;}try{const rows=await invoke('list_products');document.getElementById('products').innerHTML=rows.map(p=>`<tr><td>${escapeHtml(p.code)}</td><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.unit)}</td><td><code>${escapeHtml(p.barcode)}</code></td><td>${money(p.sale_price_minor)}</td></tr>`).join('')||'<tr><td colspan="5">لا توجد أصناف حتى الآن.</td></tr>';const count=document.getElementById('dashboardProductCount');if(count)count.textContent=rows.length.toLocaleString('ar-EG');}catch(e){statusEl.textContent='تعذر تحميل الأصناف: '+e;}}
+let viewingInactiveProducts=false;
+const productViewToggle=document.getElementById('productViewToggle');
+const productViewHelp=document.getElementById('productViewHelp');
+function updateProductViewControls(){
+ productViewToggle.textContent=viewingInactiveProducts?'العودة إلى الأصناف النشطة':'عرض الأصناف الموقوفة';
+ productViewHelp.textContent=viewingInactiveProducts
+  ?'أنت تعرض الأصناف الموقوفة. هذه الأصناف لم تُحذف؛ بياناتها وباركوداتها محفوظة. استخدم «إعادة تفعيل» لإرجاع الصنف إلى قائمة الأصناف النشطة.'
+  :'أنت تعرض الأصناف النشطة. الأصناف التي توقفها لا تُحذف، ويمكنك العثور عليها من زر «عرض الأصناف الموقوفة» وإعادة تفعيلها في أي وقت.';
+}
+function confirmProductAction(message,title='تأكيد الإجراء',confirmLabel='نعم، نفّذ'){
+ return new Promise(resolve=>{
+  const overlay=document.getElementById('productActionOverlay');
+  const ok=document.getElementById('productActionOk');
+  const cancel=document.getElementById('productActionCancel');
+  document.getElementById('productActionTitle').textContent=title;
+  document.getElementById('productActionMessage').textContent=message;
+  ok.textContent=confirmLabel;
+  overlay.hidden=false;
+  const finish=value=>{overlay.hidden=true;ok.removeEventListener('click',onOk);cancel.removeEventListener('click',onCancel);resolve(value);};
+  const onOk=()=>finish(true);
+  const onCancel=()=>finish(false);
+  ok.addEventListener('click',onOk,{once:true});
+  cancel.addEventListener('click',onCancel,{once:true});
+  cancel.focus();
+ });
+}
+productViewToggle.addEventListener('click',async()=>{
+ viewingInactiveProducts=!viewingInactiveProducts;
+ updateProductViewControls();
+ await refreshProducts();
+});
+async function refreshProducts(query){
+ if(!invoke){statusEl.textContent='واجهة المعاينة فقط: افتح التطبيق داخل Tauri لتفعيل حفظ البيانات.';return;}
+ try{
+  const term=query??document.getElementById('productSearch')?.value??'';
+  const command=term.trim()
+   ?(viewingInactiveProducts?'search_inactive_products':'search_products')
+   :(viewingInactiveProducts?'list_inactive_products':'list_products');
+  const args=term.trim()?{query:term}:undefined;
+  const rows=args?await invoke(command,args):await invoke(command);
+  const emptyMessage=viewingInactiveProducts?'لا توجد أصناف موقوفة مطابقة للبحث.':'لا توجد أصناف نشطة مطابقة للبحث.';
+  document.getElementById('products').innerHTML=rows.map(p=>{
+   const actions=viewingInactiveProducts
+    ?`<button class="btn" data-reactivate-id="${p.id}" data-name="${escapeHtml(p.name)}" type="button">إعادة تفعيل</button>`
+    :`<button class="btn secondary product-edit" data-id="${p.id}" type="button">تعديل</button><button class="btn secondary product-alt" data-id="${p.id}" type="button">باركود بديل</button><button class="btn danger product-deactivate" data-id="${p.id}" data-name="${escapeHtml(p.name)}" type="button">إيقاف</button>`;
+   return `<tr><td>${escapeHtml(p.code)}</td><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.unit)}</td><td><code>${escapeHtml(p.barcode)}</code></td><td>${money(p.purchase_price_minor)}</td><td>${money(p.sale_price_minor)}</td><td><div class="actions" style="margin:0">${actions}</div></td></tr>`;
+  }).join('')||`<tr><td colspan="7" class="muted">${emptyMessage}</td></tr>`;
+  const count=document.getElementById('dashboardProductCount');
+  if(count&&!term.trim()&&!viewingInactiveProducts)count.textContent=rows.length.toLocaleString('ar-EG');
+  document.querySelectorAll('.product-edit').forEach(btn=>btn.addEventListener('click',()=>openProductEditor(rows.find(p=>p.id===Number(btn.dataset.id)))));
+  document.querySelectorAll('.product-alt').forEach(btn=>btn.addEventListener('click',async()=>{
+   const p=rows.find(x=>x.id===Number(btn.dataset.id));
+   const value=window.prompt(`أدخل الباركود البديل للصنف: ${p.name}`);
+   if(value===null)return;
+   try{const result=await invoke('add_alternate_barcode',{productId:p.id,barcode:value,unit:p.unit});statusEl.textContent=result;await refreshProducts();}
+   catch(err){statusEl.textContent='تعذرت إضافة الباركود البديل: '+err;}
+  }));
+  document.querySelectorAll('.product-deactivate').forEach(btn=>btn.addEventListener('click',async()=>{
+   const id=Number(btn.dataset.id);const name=btn.dataset.name;
+   const confirmed=await confirmProductAction(
+    `هل تريد إيقاف الصنف «${name}»؟\n\nلن يتم حذف الصنف أو باركوداته. بعد التأكيد سينتقل إلى قائمة «الأصناف الموقوفة»، ويمكنك إعادة تفعيله لاحقًا.`,
+    'تأكيد إيقاف الصنف','نعم، أوقف الصنف');
+   if(!confirmed){statusEl.textContent='تم إلغاء العملية؛ لم يتم تغيير حالة الصنف.';return;}
+   btn.disabled=true;
+   try{
+    await invoke('deactivate_product',{id});
+    viewingInactiveProducts=true;updateProductViewControls();
+    statusEl.textContent=`تم إيقاف «${name}». الصنف محفوظ الآن في قائمة الأصناف الموقوفة، ويمكنك إعادة تفعيله من هناك.`;
+    await refreshProducts();
+   }catch(err){statusEl.textContent='تعذر إيقاف الصنف: '+err;btn.disabled=false;}
+  }));
+  document.querySelectorAll('[data-reactivate-id]').forEach(btn=>btn.addEventListener('click',async()=>{
+   const id=Number(btn.dataset.reactivateId);const name=btn.dataset.name;
+   const confirmed=await confirmProductAction(
+    `هل تريد إعادة تفعيل الصنف «${name}»؟\n\nسيعود إلى قائمة الأصناف النشطة وستظل بياناته وباركوداته كما هي.`,
+    'تأكيد إعادة تفعيل الصنف','نعم، أعد التفعيل');
+   if(!confirmed){statusEl.textContent='تم إلغاء العملية؛ ظل الصنف موقوفًا.';return;}
+   btn.disabled=true;
+   try{
+    await invoke('reactivate_product',{id});
+    viewingInactiveProducts=false;updateProductViewControls();
+    statusEl.textContent=`تمت إعادة تفعيل «${name}» وإعادته إلى قائمة الأصناف النشطة.`;
+    await refreshProducts();
+   }catch(err){statusEl.textContent='تعذرت إعادة تفعيل الصنف: '+err;btn.disabled=false;}
+  }));
+ }catch(e){statusEl.textContent='تعذر تحميل الأصناف: '+e;}
+}
+updateProductViewControls();
 function escapeHtml(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-document.getElementById('productForm').addEventListener('submit',async e=>{e.preventDefault();if(!invoke){statusEl.textContent='الحفظ متاح عند تشغيل التطبيق داخل Tauri بعد إعداد بيئة البناء.';return;}try{const p=await invoke('create_product',{code:document.getElementById('code').value,name:document.getElementById('name').value,unit:document.getElementById('unit').value,barcode:document.getElementById('barcode').value||null,purchasePriceMinor:Math.round(Number(document.getElementById('purchase').value)*100),salePriceMinor:Math.round(Number(document.getElementById('sale').value)*100)});statusEl.textContent=`تم حفظ الصنف: ${p.name}
-الباركود: ${p.barcode}`;document.getElementById('barcode').value='';await refreshProducts();}catch(err){statusEl.textContent='فشل الحفظ: '+err;}});
-document.getElementById('refresh').addEventListener('click',refreshProducts);
+function openProductEditor(p){if(!p)return;document.getElementById('editId').value=p.id;document.getElementById('editCode').value=p.code;document.getElementById('editName').value=p.name;document.getElementById('editUnit').value=p.unit;document.getElementById('editPurchase').value=money(p.purchase_price_minor);document.getElementById('editSale').value=money(p.sale_price_minor);document.getElementById('editProductStatus').textContent='';document.getElementById('editProductOverlay').hidden=false;document.getElementById('editCode').focus();}
+document.getElementById('cancelProductEdit').addEventListener('click',()=>document.getElementById('editProductOverlay').hidden=true);
+document.getElementById('editProductForm').addEventListener('submit',async e=>{e.preventDefault();const status=document.getElementById('editProductStatus');const button=document.getElementById('saveProductChanges');button.disabled=true;try{const p=await invoke('update_product',{id:Number(document.getElementById('editId').value),code:document.getElementById('editCode').value,name:document.getElementById('editName').value,unit:document.getElementById('editUnit').value,purchasePriceMinor:Math.round(Number(document.getElementById('editPurchase').value)*100),salePriceMinor:Math.round(Number(document.getElementById('editSale').value)*100)});status.textContent=`تم تعديل «${p.name}» مع الحفاظ على الباركود الأساسي: ${p.barcode}`;await refreshProducts();setTimeout(()=>{document.getElementById('editProductOverlay').hidden=true;},450);}catch(err){status.textContent='فشل حفظ التعديلات: '+err;}finally{button.disabled=false;}});
+document.getElementById('productSearch').addEventListener('input',e=>refreshProducts(e.target.value));
+document.getElementById('productForm').addEventListener('submit',async e=>{e.preventDefault();if(!invoke){statusEl.textContent='الحفظ متاح عند تشغيل التطبيق داخل Tauri.';return;}try{const p=await invoke('create_product',{code:document.getElementById('code').value,name:document.getElementById('name').value,unit:document.getElementById('unit').value,barcode:document.getElementById('barcode').value||null,purchasePriceMinor:Math.round(Number(document.getElementById('purchase').value)*100),salePriceMinor:Math.round(Number(document.getElementById('sale').value)*100)});statusEl.textContent=`تم حفظ الصنف: ${p.name}\nالباركود: ${p.barcode}`;document.getElementById('barcode').value='';document.getElementById('productForm').reset();document.getElementById('unit').value='قطعة';document.getElementById('purchase').value='0';document.getElementById('sale').value='0';document.getElementById('productSearch').value='';await refreshProducts('');}catch(err){statusEl.textContent='فشل الحفظ: '+err;}});
+document.getElementById('refresh').addEventListener('click',()=>refreshProducts());
 const backupStatus=document.getElementById('backupStatus');
 const restorePointsEl=document.getElementById('restorePoints');
 const dialog=window.__TAURI__?.dialog;
