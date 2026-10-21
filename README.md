@@ -198,3 +198,12 @@ cargo run
 4. سجّل دفعة جزئية نقدية، وتأكد من تغير المتبقي في التقرير والفاتورة المطبوعة وزيادة رصيد الخزنة. جرّب مبلغًا أكبر من المتبقي، وتأكد من رفضه.
 5. أنشئ عرض سعر واطبعه، ثم اقبل العرض وحوّله لمسودة بيع. تأكد أن التحويل لا يغيّر المخزون حتى اعتماد فاتورة البيع.
 6. شغّل `cargo check` على Fedora، ثم اختبر كل ذلك بقاعدة اختبار قبل استعماله على البيانات الحقيقية.
+
+
+## Company tax settings and permissions
+
+- Configure the VAT/tax rate from Company Settings (0–100%, two decimal places).
+- Choose whether entered item prices include tax or tax is added to the discounted subtotal.
+- Each saved invoice/quotation stores a tax-rate and tax-mode snapshot; existing saved documents are not retroactively recalculated when company settings change. Editing a draft recalculates it using the current settings.
+- Viewing company settings requires `company.settings.view` or `company.settings.manage`; changing settings requires `company.settings.manage`. The Rust commands enforce these checks independently of UI visibility.
+- Invoice/quotation printing loads the company profile through a separate command that checks the relevant `sales.view`, `purchases.view`, or `quotations.view` permission.

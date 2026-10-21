@@ -93,6 +93,9 @@ CREATE TABLE IF NOT EXISTS purchase_invoices (
     subtotal_minor INTEGER NOT NULL DEFAULT 0 CHECK (subtotal_minor >= 0),
     discount_minor INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
     total_minor INTEGER NOT NULL DEFAULT 0 CHECK (total_minor >= 0),
+    tax_rate_bps INTEGER NOT NULL DEFAULT 0,
+    tax_minor INTEGER NOT NULL DEFAULT 0,
+    prices_include_tax INTEGER NOT NULL DEFAULT 0 CHECK (prices_include_tax IN (0,1)),
     paid_minor INTEGER NOT NULL DEFAULT 0 CHECK (paid_minor >= 0),
     notes TEXT,
     status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted','cancelled')),
@@ -124,6 +127,9 @@ CREATE TABLE IF NOT EXISTS sales (
     subtotal_minor INTEGER NOT NULL DEFAULT 0 CHECK (subtotal_minor >= 0),
     discount_minor INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
     total_minor INTEGER NOT NULL DEFAULT 0 CHECK (total_minor >= 0),
+    tax_rate_bps INTEGER NOT NULL DEFAULT 0,
+    tax_minor INTEGER NOT NULL DEFAULT 0,
+    prices_include_tax INTEGER NOT NULL DEFAULT 0 CHECK (prices_include_tax IN (0,1)),
     paid_minor INTEGER NOT NULL DEFAULT 0 CHECK (paid_minor >= 0),
     notes TEXT,
     status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted','cancelled')),
@@ -161,18 +167,22 @@ INSERT OR IGNORE INTO warehouses(code,name) VALUES ('MAIN', 'المخزن الر
 
 INSERT OR IGNORE INTO app_settings(key, value) VALUES
 ('app_name', 'مدار'),
-('database_schema_version', '9'),
+('database_schema_version', '10'),
 ('barcode_prefix', 'MAD'),
 ('barcode_auto_generate', 'true'),
-('backup_reminder_enabled', 'true');
+('backup_reminder_enabled', 'true'),
+('company_tax_rate_bps','0'),
+('company_prices_include_tax','false');
 
 
--- Commercial feature extension (v9): quotations, payments, cashbook and sale cost snapshots.
+-- Commercial feature extension (v10): quotations, payments, cashbook, VAT snapshots and sale cost snapshots.
 CREATE TABLE IF NOT EXISTS quotations (
     id INTEGER PRIMARY KEY, quote_no TEXT NOT NULL UNIQUE,
     customer_id INTEGER NOT NULL REFERENCES customers(id), quote_date TEXT NOT NULL, valid_until TEXT,
     subtotal_minor INTEGER NOT NULL DEFAULT 0 CHECK(subtotal_minor>=0), discount_minor INTEGER NOT NULL DEFAULT 0 CHECK(discount_minor>=0),
-    total_minor INTEGER NOT NULL DEFAULT 0 CHECK(total_minor>=0), notes TEXT,
+    total_minor INTEGER NOT NULL DEFAULT 0 CHECK(total_minor>=0),
+    tax_rate_bps INTEGER NOT NULL DEFAULT 0, tax_minor INTEGER NOT NULL DEFAULT 0,
+    prices_include_tax INTEGER NOT NULL DEFAULT 0 CHECK(prices_include_tax IN (0,1)), notes TEXT,
     status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','sent','accepted','rejected','expired','converted','cancelled')),
     converted_sale_id INTEGER, created_by INTEGER, created_by_username TEXT,
     created_at TEXT NOT NULL DEFAULT(datetime('now')), updated_at TEXT NOT NULL DEFAULT(datetime('now'))

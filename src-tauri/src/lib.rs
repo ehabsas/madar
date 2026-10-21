@@ -125,7 +125,8 @@ fn initialize_database(path: &PathBuf) -> Result<(), String> {
             supplier_id INTEGER NOT NULL REFERENCES suppliers(id), invoice_date TEXT NOT NULL,
             subtotal_minor INTEGER NOT NULL DEFAULT 0 CHECK (subtotal_minor >= 0),
             discount_minor INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
-            total_minor INTEGER NOT NULL DEFAULT 0 CHECK (total_minor >= 0), notes TEXT,
+            total_minor INTEGER NOT NULL DEFAULT 0 CHECK (total_minor >= 0),
+            tax_rate_bps INTEGER NOT NULL DEFAULT 0, tax_minor INTEGER NOT NULL DEFAULT 0, prices_include_tax INTEGER NOT NULL DEFAULT 0, notes TEXT,
             status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted','cancelled')),
             created_by INTEGER, created_by_username TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now')), posted_at TEXT, cancelled_at TEXT
@@ -145,7 +146,9 @@ fn initialize_database(path: &PathBuf) -> Result<(), String> {
             customer_id INTEGER REFERENCES customers(id), invoice_date TEXT NOT NULL,
             subtotal_minor INTEGER NOT NULL DEFAULT 0 CHECK (subtotal_minor >= 0),
             discount_minor INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
-            total_minor INTEGER NOT NULL DEFAULT 0 CHECK (total_minor >= 0), paid_minor INTEGER NOT NULL DEFAULT 0 CHECK (paid_minor >= 0),
+            total_minor INTEGER NOT NULL DEFAULT 0 CHECK (total_minor >= 0),
+            tax_rate_bps INTEGER NOT NULL DEFAULT 0, tax_minor INTEGER NOT NULL DEFAULT 0, prices_include_tax INTEGER NOT NULL DEFAULT 0,
+            paid_minor INTEGER NOT NULL DEFAULT 0 CHECK (paid_minor >= 0),
             notes TEXT, status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted','cancelled')),
             created_by INTEGER, created_by_username TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now')), posted_at TEXT, cancelled_at TEXT
@@ -161,8 +164,8 @@ fn initialize_database(path: &PathBuf) -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS idx_sale_items_invoice ON sale_items(sale_id);
         INSERT OR IGNORE INTO warehouses(code,name) VALUES ('MAIN','المخزن الرئيسي');
         INSERT OR IGNORE INTO app_settings(key,value) VALUES ('app_name','مدار');
-        INSERT OR IGNORE INTO app_settings(key,value) VALUES ('database_schema_version','9');
-        UPDATE app_settings SET value='9', updated_at=datetime('now') WHERE key='database_schema_version' AND value IN ('1','2','3','4','5','6','7','8');
+        INSERT OR IGNORE INTO app_settings(key,value) VALUES ('database_schema_version','10');
+        UPDATE app_settings SET value='10', updated_at=datetime('now') WHERE key='database_schema_version' AND value IN ('1','2','3','4','5','6','7','8','9');
         INSERT OR IGNORE INTO app_settings(key,value) VALUES ('barcode_prefix','MAD');
         INSERT OR IGNORE INTO app_settings(key,value) VALUES ('barcode_auto_generate','true');"
     ).map_err(|e| e.to_string())?;
@@ -236,6 +239,7 @@ fn initialize_database(path: &PathBuf) -> Result<(), String> {
             subtotal_minor INTEGER NOT NULL DEFAULT 0 CHECK (subtotal_minor >= 0),
             discount_minor INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
             total_minor INTEGER NOT NULL DEFAULT 0 CHECK (total_minor >= 0),
+            tax_rate_bps INTEGER NOT NULL DEFAULT 0, tax_minor INTEGER NOT NULL DEFAULT 0, prices_include_tax INTEGER NOT NULL DEFAULT 0,
             notes TEXT,
             status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','sent','accepted','rejected','expired','converted','cancelled')),
             converted_sale_id INTEGER,
@@ -290,8 +294,17 @@ fn initialize_database(path: &PathBuf) -> Result<(), String> {
         ('company_name',''),('company_phone',''),('company_email',''),('company_address',''),
         ('company_tax_number',''),('company_commercial_register',''),('company_website',''),
         ('company_logo_data_url',''),('company_invoice_footer',''),('currency_code','EGP'),
-        ('company_schema_version','1');"
+        ('company_tax_rate_bps','0'),('company_prices_include_tax','false'),
+        ('company_schema_version','2');"
     ).map_err(|e| e.to_string())?;
+    // Additive tax snapshot migration: existing documents retain their original totals and get a zero-tax snapshot.
+    for table in ["purchase_invoices", "sales", "quotations"] {
+        for (column, declaration) in [("tax_rate_bps", "INTEGER NOT NULL DEFAULT 0"), ("tax_minor", "INTEGER NOT NULL DEFAULT 0"), ("prices_include_tax", "INTEGER NOT NULL DEFAULT 0")] {
+            if !table_has_column(&conn, table, column)? {
+                conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {declaration}"), []).map_err(|e| e.to_string())?;
+            }
+        }
+    }
     if !table_has_column(&conn, "purchase_invoices", "paid_minor")? {
         conn.execute("ALTER TABLE purchase_invoices ADD COLUMN paid_minor INTEGER NOT NULL DEFAULT 0 CHECK (paid_minor >= 0)", []).map_err(|e| e.to_string())?;
     }
@@ -364,7 +377,7 @@ fn seed_access_control(conn: &Connection) -> Result<(), String> {
         ("sales.cancel", "إلغاء فاتورة مبيعات", "إلغاء المسودة أو عكس أثر فاتورة معتمدة بأمان"),
         ("sales.price.override", "تجاوز سعر البيع", "تغيير سعر البيع داخل الفاتورة عن السعر المسجل للصنف"),
         ("company.settings.view", "عرض بيانات الشركة", "عرض بيانات الشركة المستخدمة في المطبوعات"),
-        ("company.settings.manage", "إدارة بيانات الشركة", "تعديل الاسم ووسائل الاتصال والشعار وبيانات الفواتير المطبوعة"),
+        ("company.settings.manage", "إدارة بيانات الشركة", "تعديل بيانات الشركة والضريبة وطريقة شمول الأسعار للضريبة وبيانات الفواتير المطبوعة"),
         ("quotations.view", "عرض عروض الأسعار", "عرض وبحث عروض الأسعار وتفاصيلها"),
         ("quotations.create", "إنشاء عرض سعر", "إنشاء عرض سعر جديد كمسودة"),
         ("quotations.edit", "تعديل عرض سعر", "تعديل عرض السعر طالما لم يتم تحويله إلى فاتورة"),
@@ -1274,32 +1287,82 @@ fn get_company_branding(state: State<'_, AppState>, app: tauri::AppHandle) -> Re
     Ok(serde_json::json!({"name":read("company_name")?,"logoDataUrl":read("company_logo_data_url")?,"currencyCode":read("currency_code")?}))
 }
 
-#[tauri::command]
-fn get_company_profile(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<serde_json::Value,String> {
-    let actor = {
-        let guard = state.session.lock().map_err(|_| "تعذر الوصول إلى جلسة المستخدم")?;
-        let user = guard.as_ref().ok_or_else(|| "يلزم تسجيل الدخول أولًا".to_string())?;
-        if !user.permissions.iter().any(|p| ["company.settings.view","company.settings.manage","purchases.view","sales.view","quotations.view"].contains(&p.as_str())) {
-            return Err("ليس لديك صلاحية عرض بيانات الشركة".into());
-        }
-        user.clone()
-    };
-    let path=database_path(&app)?; initialize_database(&path)?; let conn=connect(&path)?;
+fn read_company_profile_json(conn: &Connection) -> Result<serde_json::Value,String> {
     let mut result=serde_json::Map::new();
     for key in ["company_name","company_phone","company_email","company_address","company_tax_number","company_commercial_register","company_website","company_logo_data_url","company_invoice_footer","currency_code"] {
         let value:String=conn.query_row("SELECT value FROM app_settings WHERE key=?1",[key],|r|r.get(0)).optional().map_err(|e|e.to_string())?.unwrap_or_default();
         let out_key=key.strip_prefix("company_").unwrap_or(key);
         result.insert(out_key.to_string(),serde_json::Value::String(value));
     }
-    let _ = actor;
+    let (tax_rate_bps, prices_include_tax)=read_company_tax_settings(conn)?;
+    result.insert("tax_rate".to_string(),serde_json::Value::from(tax_rate_bps as f64 / 100.0));
+    result.insert("tax_rate_bps".to_string(),serde_json::Value::from(tax_rate_bps));
+    result.insert("prices_include_tax".to_string(),serde_json::Value::Bool(prices_include_tax));
     Ok(serde_json::Value::Object(result))
 }
 
+fn read_company_tax_settings(conn: &Connection) -> Result<(i64,bool),String> {
+    let get = |key: &str, fallback: &str| -> Result<String,String> {
+        conn.query_row("SELECT value FROM app_settings WHERE key=?1",[key],|r|r.get(0))
+            .optional().map(|v: Option<String>| v.unwrap_or_else(||fallback.to_string())).map_err(|e|e.to_string())
+    };
+    let rate: i64 = get("company_tax_rate_bps","0")?.parse().map_err(|_|"نسبة الضريبة المحفوظة غير صالحة".to_string())?;
+    if !(0..=10000).contains(&rate) { return Err("نسبة الضريبة يجب أن تكون بين 0 و100%".into()); }
+    let inclusive = match get("company_prices_include_tax","false")?.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" => true,
+        "false" | "0" | "no" | "" => false,
+        _ => return Err("إعداد شمول الأسعار للضريبة غير صالح".into()),
+    };
+    Ok((rate,inclusive))
+}
+
+fn calculate_document_tax(subtotal_minor: i64, discount_minor: i64, rate_bps: i64, prices_include_tax: bool) -> Result<(i64,i64),String> {
+    if subtotal_minor < 0 || discount_minor < 0 || discount_minor > subtotal_minor { return Err("قيمة الإجمالي أو الخصم غير صالحة".into()); }
+    if !(0..=10000).contains(&rate_bps) { return Err("نسبة الضريبة غير صالحة".into()); }
+    let base=(subtotal_minor-discount_minor) as i128;
+    let rate=rate_bps as i128;
+    let tax=if rate==0 || base==0 {0_i128} else if prices_include_tax {
+        let divisor=10000_i128+rate;
+        (base*rate + divisor/2)/divisor
+    } else {
+        (base*rate + 5000_i128)/10000_i128
+    };
+    let tax=i64::try_from(tax).map_err(|_|"قيمة الضريبة أكبر من الحد المسموح")?;
+    let total=if prices_include_tax { base } else { base + tax as i128 };
+    let total=i64::try_from(total).map_err(|_|"إجمالي المستند أكبر من الحد المسموح")?;
+    Ok((tax,total))
+}
+
+#[tauri::command]
+fn get_company_profile(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<serde_json::Value,String> {
+    {
+        let guard = state.session.lock().map_err(|_| "تعذر الوصول إلى جلسة المستخدم")?;
+        let user = guard.as_ref().ok_or_else(|| "يلزم تسجيل الدخول أولًا".to_string())?;
+        if !user.permissions.iter().any(|p| ["company.settings.view","company.settings.manage"].contains(&p.as_str())) {
+            return Err("ليس لديك صلاحية عرض بيانات الشركة".into());
+        }
+    }
+    let path=database_path(&app)?; initialize_database(&path)?; let conn=connect(&path)?;
+    read_company_profile_json(&conn)
+}
+
+#[tauri::command(rename_all="camelCase")]
+fn get_company_printing_profile(state: State<'_, AppState>, app: tauri::AppHandle, document_type: String) -> Result<serde_json::Value,String> {
+    let permission=match document_type.as_str(){"sale"=>"sales.view","purchase"=>"purchases.view","quote"=>"quotations.view",_=>return Err("نوع المستند غير صالح".into())};
+    let _actor=require_permission(state.inner(),permission)?;
+    let path=database_path(&app)?;initialize_database(&path)?;let conn=connect(&path)?;
+    read_company_profile_json(&conn)
+}
+
 #[tauri::command(rename_all = "camelCase")]
-fn save_company_profile(app: tauri::AppHandle, state: State<'_, AppState>, name: String, phone: Option<String>, email: Option<String>, address: Option<String>, tax_number: Option<String>, commercial_register: Option<String>, website: Option<String>, logo_data_url: Option<String>, invoice_footer: Option<String>, currency_code: Option<String>) -> Result<String,String> {
+fn save_company_profile(app: tauri::AppHandle, state: State<'_, AppState>, name: String, phone: Option<String>, email: Option<String>, address: Option<String>, tax_number: Option<String>, commercial_register: Option<String>, website: Option<String>, logo_data_url: Option<String>, invoice_footer: Option<String>, currency_code: Option<String>, tax_rate: f64, prices_include_tax: bool) -> Result<String,String> {
     let actor=require_permission(state.inner(),"company.settings.manage")?;
     let name=name.trim().to_string();
     if name.is_empty() || name.chars().count()>180 {return Err("اسم الشركة مطلوب وبحد أقصى 180 حرفًا".into());}
+    if !tax_rate.is_finite() || !(0.0..=100.0).contains(&tax_rate) { return Err("نسبة الضريبة يجب أن تكون رقمًا بين 0 و100%".into()); }
+    let tax_rate_bps=(tax_rate*100.0).round() as i64;
+    let tax_rate_text=tax_rate_bps.to_string();
+    let prices_include_tax_text=if prices_include_tax {"true"} else {"false"};
     let phone=clean_optional_profile(phone,"الهاتف",60)?;
     let email=validate_profile_email(email)?;
     let address=clean_optional_profile(address,"العنوان",500)?;
@@ -1312,12 +1375,12 @@ fn save_company_profile(app: tauri::AppHandle, state: State<'_, AppState>, name:
     if !["EGP","SAR","AED","USD","EUR"].contains(&currency.as_str()) {return Err("رمز العملة غير مدعوم".into());}
     let path=database_path(&app)?;initialize_database(&path)?;let mut conn=connect(&path)?;
     let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|e.to_string())?;
-    for (key,value) in [("company_name",Some(name.as_str())),("company_phone",phone.as_deref()),("company_email",email.as_deref()),("company_address",address.as_deref()),("company_tax_number",tax_number.as_deref()),("company_commercial_register",commercial_register.as_deref()),("company_website",website.as_deref()),("company_logo_data_url",logo.as_deref()),("company_invoice_footer",invoice_footer.as_deref()),("currency_code",Some(currency.as_str()))] {
+    for (key,value) in [("company_name",Some(name.as_str())),("company_phone",phone.as_deref()),("company_email",email.as_deref()),("company_address",address.as_deref()),("company_tax_number",tax_number.as_deref()),("company_commercial_register",commercial_register.as_deref()),("company_website",website.as_deref()),("company_logo_data_url",logo.as_deref()),("company_invoice_footer",invoice_footer.as_deref()),("currency_code",Some(currency.as_str())),("company_tax_rate_bps",Some(tax_rate_text.as_str())),("company_prices_include_tax",Some(prices_include_tax_text))] {
         tx.execute("INSERT INTO app_settings(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=datetime('now')",params![key,value.unwrap_or("")]).map_err(|e|e.to_string())?;
     }
-    write_audit(&tx,Some(&actor),"company_profile_updated","company",None,&format!("name={name}; currency={currency}; logo_updated={}",logo.is_some()))?;
+    write_audit(&tx,Some(&actor),"company_profile_updated","company",None,&format!("name={name}; currency={currency}; tax_rate_bps={tax_rate_bps}; prices_include_tax={prices_include_tax}; logo_updated={}",logo.is_some()))?;
     tx.commit().map_err(|e|e.to_string())?;
-    Ok("تم حفظ بيانات الشركة لاستخدامها في الفواتير والمطبوعات".into())
+    Ok("تم حفظ بيانات الشركة وإعدادات الضريبة".into())
 }
 
 #[derive(Serialize)]
@@ -1395,32 +1458,34 @@ fn get_financial_summary(app:tauri::AppHandle,state:State<'_,AppState>,from_date
  let path=database_path(&app)?;initialize_database(&path)?;let conn=connect(&path)?;
  let sales:i64=conn.query_row("SELECT COALESCE(SUM(total_minor),0) FROM sales WHERE status='posted' AND invoice_date BETWEEN ?1 AND ?2",params![from_date,to_date],|r|r.get(0)).map_err(|e|e.to_string())?;
  let purchases:i64=conn.query_row("SELECT COALESCE(SUM(total_minor),0) FROM purchase_invoices WHERE status='posted' AND invoice_date BETWEEN ?1 AND ?2",params![from_date,to_date],|r|r.get(0)).map_err(|e|e.to_string())?;
+ let sales_tax:i64=conn.query_row("SELECT COALESCE(SUM(tax_minor),0) FROM sales WHERE status='posted' AND invoice_date BETWEEN ?1 AND ?2",params![from_date,to_date],|r|r.get(0)).map_err(|e|e.to_string())?;
+ let purchases_tax:i64=conn.query_row("SELECT COALESCE(SUM(tax_minor),0) FROM purchase_invoices WHERE status='posted' AND invoice_date BETWEEN ?1 AND ?2",params![from_date,to_date],|r|r.get(0)).map_err(|e|e.to_string())?;
  let received:i64=conn.query_row("SELECT COALESCE(SUM(amount_minor),0) FROM payments WHERE invoice_type='sale' AND payment_date BETWEEN ?1 AND ?2",params![from_date,to_date],|r|r.get(0)).map_err(|e|e.to_string())?;
  let paid:i64=conn.query_row("SELECT COALESCE(SUM(amount_minor),0) FROM payments WHERE invoice_type='purchase' AND payment_date BETWEEN ?1 AND ?2",params![from_date,to_date],|r|r.get(0)).map_err(|e|e.to_string())?;
  let outstanding_sales:i64=conn.query_row("SELECT COALESCE(SUM(total_minor-paid_minor),0) FROM sales WHERE status='posted'",[],|r|r.get(0)).map_err(|e|e.to_string())?;
  let outstanding_purchases:i64=conn.query_row("SELECT COALESCE(SUM(total_minor-paid_minor),0) FROM purchase_invoices WHERE status='posted'",[],|r|r.get(0)).map_err(|e|e.to_string())?;
- let gross_profit: i64=conn.query_row("SELECT COALESCE(SUM(s.total_minor - COALESCE((SELECT SUM(CAST(si.quantity_milli * si.cost_price_minor / 1000 AS INTEGER)) FROM sale_items si WHERE si.sale_id=s.id AND si.cost_price_minor IS NOT NULL),0)),0) FROM sales s WHERE s.status='posted' AND s.invoice_date BETWEEN ?1 AND ?2 AND NOT EXISTS(SELECT 1 FROM sale_items si WHERE si.sale_id=s.id AND si.cost_price_minor IS NULL)",params![from_date,to_date],|r|r.get(0)).map_err(|e|e.to_string())?;
+ let gross_profit: i64=conn.query_row("SELECT COALESCE(SUM(s.total_minor - COALESCE(s.tax_minor,0) - COALESCE((SELECT SUM(CAST(si.quantity_milli * si.cost_price_minor / 1000 AS INTEGER)) FROM sale_items si WHERE si.sale_id=s.id AND si.cost_price_minor IS NOT NULL),0)),0) FROM sales s WHERE s.status='posted' AND s.invoice_date BETWEEN ?1 AND ?2 AND NOT EXISTS(SELECT 1 FROM sale_items si WHERE si.sale_id=s.id AND si.cost_price_minor IS NULL)",params![from_date,to_date],|r|r.get(0)).map_err(|e|e.to_string())?;
  let unknown_cost_sales:i64=conn.query_row("SELECT COUNT(*) FROM sales s WHERE s.status='posted' AND s.invoice_date BETWEEN ?1 AND ?2 AND EXISTS(SELECT 1 FROM sale_items si WHERE si.sale_id=s.id AND si.cost_price_minor IS NULL)",params![from_date,to_date],|r|r.get(0)).map_err(|e|e.to_string())?;
  let low_stock:i64=conn.query_row("SELECT COUNT(*) FROM products p WHERE p.is_active=1 AND p.minimum_quantity_milli>0 AND (SELECT COALESCE(SUM(sm.quantity_milli),0) FROM stock_movements sm WHERE sm.product_id=p.id)<p.minimum_quantity_milli",[],|r|r.get(0)).map_err(|e|e.to_string())?;
- Ok(serde_json::json!({"fromDate":from_date,"toDate":to_date,"salesMinor":sales,"purchasesMinor":purchases,"receivedMinor":received,"paidMinor":paid,"outstandingSalesMinor":outstanding_sales,"outstandingPurchasesMinor":outstanding_purchases,"grossProfitMinor":gross_profit,"salesMissingCostSnapshot":unknown_cost_sales,"lowStockProducts":low_stock}))
+ Ok(serde_json::json!({"fromDate":from_date,"toDate":to_date,"salesMinor":sales,"purchasesMinor":purchases,"receivedMinor":received,"paidMinor":paid,"outstandingSalesMinor":outstanding_sales,"outstandingPurchasesMinor":outstanding_purchases,"grossProfitMinor":gross_profit,"salesTaxMinor":sales_tax,"purchasesTaxMinor":purchases_tax,"salesMissingCostSnapshot":unknown_cost_sales,"lowStockProducts":low_stock}))
 }
 
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
-struct QuotationRow{id:i64,quote_no:String,customer_name:String,quote_date:String,valid_until:Option<String>,subtotal_minor:i64,discount_minor:i64,total_minor:i64,notes:Option<String>,status:String,item_count:i64,created_by_name:Option<String>,customer_id:i64,converted_sale_id:Option<i64>}
-fn quotation_row(conn:&Connection,id:i64)->Result<Option<QuotationRow>,String>{conn.query_row("SELECT q.id,q.quote_no,c.name,q.quote_date,q.valid_until,q.subtotal_minor,q.discount_minor,q.total_minor,q.notes,q.status,(SELECT COUNT(*) FROM quotation_items qi WHERE qi.quotation_id=q.id),COALESCE(q.created_by_username,u.display_name),q.customer_id,q.converted_sale_id FROM quotations q JOIN customers c ON c.id=q.customer_id LEFT JOIN users u ON u.id=q.created_by WHERE q.id=?1",[id],|r|Ok(QuotationRow{id:r.get(0)?,quote_no:r.get(1)?,customer_name:r.get(2)?,quote_date:r.get(3)?,valid_until:r.get(4)?,subtotal_minor:r.get(5)?,discount_minor:r.get(6)?,total_minor:r.get(7)?,notes:r.get(8)?,status:r.get(9)?,item_count:r.get(10)?,created_by_name:r.get(11)?,customer_id:r.get(12)?,converted_sale_id:r.get(13)?})).optional().map_err(|e|e.to_string())}
+struct QuotationRow{id:i64,quote_no:String,customer_name:String,quote_date:String,valid_until:Option<String>,subtotal_minor:i64,discount_minor:i64,total_minor:i64,tax_rate_bps:i64,tax_minor:i64,prices_include_tax:bool,notes:Option<String>,status:String,item_count:i64,created_by_name:Option<String>,customer_id:i64,converted_sale_id:Option<i64>}
+fn quotation_row(conn:&Connection,id:i64)->Result<Option<QuotationRow>,String>{conn.query_row("SELECT q.id,q.quote_no,c.name,q.quote_date,q.valid_until,q.subtotal_minor,q.discount_minor,q.total_minor,q.tax_rate_bps,q.tax_minor,q.prices_include_tax,q.notes,q.status,(SELECT COUNT(*) FROM quotation_items qi WHERE qi.quotation_id=q.id),COALESCE(q.created_by_username,u.display_name),q.customer_id,q.converted_sale_id FROM quotations q JOIN customers c ON c.id=q.customer_id LEFT JOIN users u ON u.id=q.created_by WHERE q.id=?1",[id],|r|Ok(QuotationRow{id:r.get(0)?,quote_no:r.get(1)?,customer_name:r.get(2)?,quote_date:r.get(3)?,valid_until:r.get(4)?,subtotal_minor:r.get(5)?,discount_minor:r.get(6)?,total_minor:r.get(7)?,tax_rate_bps:r.get(8)?,tax_minor:r.get(9)?,prices_include_tax:r.get::<_,i64>(10)?!=0,notes:r.get(11)?,status:r.get(12)?,item_count:r.get(13)?,created_by_name:r.get(14)?,customer_id:r.get(15)?,converted_sale_id:r.get(16)?})).optional().map_err(|e|e.to_string())}
 #[tauri::command(rename_all="camelCase")]
-fn list_quotations(app:tauri::AppHandle,state:State<'_,AppState>,query:Option<String>)->Result<Vec<QuotationRow>,String>{let _actor=require_permission(state.inner(),"quotations.view")?;let path=database_path(&app)?;initialize_database(&path)?;let conn=connect(&path)?;let q=query.unwrap_or_default();let like=format!("%{}%",q.trim());let mut stmt=conn.prepare("SELECT q.id,q.quote_no,c.name,q.quote_date,q.valid_until,q.subtotal_minor,q.discount_minor,q.total_minor,q.notes,q.status,(SELECT COUNT(*) FROM quotation_items qi WHERE qi.quotation_id=q.id),COALESCE(q.created_by_username,u.display_name),q.customer_id,q.converted_sale_id FROM quotations q JOIN customers c ON c.id=q.customer_id LEFT JOIN users u ON u.id=q.created_by WHERE (?1='' OR q.quote_no LIKE ?2 OR c.name LIKE ?2 OR COALESCE(q.notes,'') LIKE ?2) ORDER BY q.id DESC LIMIT 500").map_err(|e|e.to_string())?;let rows=stmt.query_map(params![q.trim(),like],|r|Ok(QuotationRow{id:r.get(0)?,quote_no:r.get(1)?,customer_name:r.get(2)?,quote_date:r.get(3)?,valid_until:r.get(4)?,subtotal_minor:r.get(5)?,discount_minor:r.get(6)?,total_minor:r.get(7)?,notes:r.get(8)?,status:r.get(9)?,item_count:r.get(10)?,created_by_name:r.get(11)?,customer_id:r.get(12)?,converted_sale_id:r.get(13)?})).map_err(|e|e.to_string())?;rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())}
+fn list_quotations(app:tauri::AppHandle,state:State<'_,AppState>,query:Option<String>)->Result<Vec<QuotationRow>,String>{let _actor=require_permission(state.inner(),"quotations.view")?;let path=database_path(&app)?;initialize_database(&path)?;let conn=connect(&path)?;let q=query.unwrap_or_default();let like=format!("%{}%",q.trim());let mut stmt=conn.prepare("SELECT q.id,q.quote_no,c.name,q.quote_date,q.valid_until,q.subtotal_minor,q.discount_minor,q.total_minor,q.tax_rate_bps,q.tax_minor,q.prices_include_tax,q.notes,q.status,(SELECT COUNT(*) FROM quotation_items qi WHERE qi.quotation_id=q.id),COALESCE(q.created_by_username,u.display_name),q.customer_id,q.converted_sale_id FROM quotations q JOIN customers c ON c.id=q.customer_id LEFT JOIN users u ON u.id=q.created_by WHERE (?1='' OR q.quote_no LIKE ?2 OR c.name LIKE ?2 OR COALESCE(q.notes,'') LIKE ?2) ORDER BY q.id DESC LIMIT 500").map_err(|e|e.to_string())?;let rows=stmt.query_map(params![q.trim(),like],|r|Ok(QuotationRow{id:r.get(0)?,quote_no:r.get(1)?,customer_name:r.get(2)?,quote_date:r.get(3)?,valid_until:r.get(4)?,subtotal_minor:r.get(5)?,discount_minor:r.get(6)?,total_minor:r.get(7)?,tax_rate_bps:r.get(8)?,tax_minor:r.get(9)?,prices_include_tax:r.get::<_,i64>(10)?!=0,notes:r.get(11)?,status:r.get(12)?,item_count:r.get(13)?,created_by_name:r.get(14)?,customer_id:r.get(15)?,converted_sale_id:r.get(16)?})).map_err(|e|e.to_string())?;rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())}
 #[tauri::command(rename_all="camelCase")]
 fn get_quotation_details(app:tauri::AppHandle,state:State<'_,AppState>,quotation_id:i64)->Result<serde_json::Value,String>{let _actor=require_permission(state.inner(),"quotations.view")?;let path=database_path(&app)?;initialize_database(&path)?;let conn=connect(&path)?;let quote=quotation_row(&conn,quotation_id)?.ok_or("عرض السعر غير موجود")?;let mut stmt=conn.prepare("SELECT qi.id,qi.product_id,p.code,p.name,COALESCE(qi.unit,p.unit,'قطعة'),qi.quantity_milli,qi.unit_price_minor,qi.line_total_minor FROM quotation_items qi JOIN products p ON p.id=qi.product_id WHERE qi.quotation_id=?1 ORDER BY qi.id").map_err(|e|e.to_string())?;let rows=stmt.query_map([quotation_id],|r|Ok(InvoiceItemRow{id:r.get(0)?,product_id:r.get(1)?,product_code:r.get(2)?,product_name:r.get(3)?,unit:r.get(4)?,quantity_milli:r.get(5)?,unit_price_minor:r.get(6)?,line_total_minor:r.get(7)?})).map_err(|e|e.to_string())?;let items=rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;Ok(serde_json::json!({"quotation":quote,"items":items}))}
 #[tauri::command(rename_all="camelCase")]
 fn save_quotation(app:tauri::AppHandle,state:State<'_,AppState>,quotation_id:Option<i64>,customer_id:i64,quote_date:String,valid_until:Option<String>,discount_minor:i64,notes:Option<String>,items:Vec<InvoiceItemInput>)->Result<QuotationRow,String>{let permission=if quotation_id.is_some(){"quotations.edit"}else{"quotations.create"};let actor=require_permission(state.inner(),permission)?;if !actor.permissions.iter().any(|p|p=="quotations.view")||!actor.permissions.iter().any(|p|p=="customers.view")||!actor.permissions.iter().any(|p|p=="products.view"){return Err("تحتاج صلاحيات عرض عروض الأسعار والعملاء والأصناف".into());}if items.is_empty()||items.len()>200{return Err("عرض السعر يجب أن يحتوي من صنف واحد إلى 200 صنف".into());}if discount_minor<0{return Err("الخصم لا يمكن أن يكون سالبًا".into());}let notes=clean_optional_profile(notes,"الملاحظات",2000)?;let path=database_path(&app)?;initialize_database(&path)?;let mut conn=connect(&path)?;let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|e.to_string())?;let norm:Option<String>=tx.query_row("SELECT date(?1)",[quote_date.trim()],|r|r.get(0)).map_err(|e|e.to_string())?;if norm.as_deref()!=Some(quote_date.trim()){return Err("تاريخ العرض غير صحيح".into());}let valid=if let Some(v)=valid_until.as_deref().filter(|v|!v.trim().is_empty()){let d:Option<String>=tx.query_row("SELECT date(?1)",[v.trim()],|r|r.get(0)).map_err(|e|e.to_string())?;if d.as_deref()!=Some(v.trim()){return Err("تاريخ صلاحية العرض غير صحيح".into());}Some(v.trim().to_string())}else{None};let customer_ok:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM customers WHERE id=?1 AND is_active=1)",[customer_id],|r|Ok(r.get::<_,i64>(0)?!=0)).map_err(|e|e.to_string())?;if !customer_ok{return Err("العميل غير موجود أو موقوف".into());}
  let id=if let Some(id)=quotation_id{let status:Option<String>=tx.query_row("SELECT status FROM quotations WHERE id=?1",[id],|r|r.get(0)).optional().map_err(|e|e.to_string())?;if status.as_deref()!=Some("draft"){return Err("يمكن تعديل مسودات عروض الأسعار فقط".into());}tx.execute("UPDATE quotations SET customer_id=?1,quote_date=?2,valid_until=?3,discount_minor=?4,notes=?5,updated_at=datetime('now') WHERE id=?6",params![customer_id,quote_date.trim(),valid,discount_minor,notes,id]).map_err(|e|e.to_string())?;tx.execute("DELETE FROM quotation_items WHERE quotation_id=?1",[id]).map_err(|e|e.to_string())?;id}else{tx.execute("INSERT INTO quotations(quote_no,customer_id,quote_date,valid_until,discount_minor,notes,created_by,created_by_username) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",params![format!("TMP-Q-{}",SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e|e.to_string())?.as_nanos()),customer_id,quote_date.trim(),valid,discount_minor,notes,actor.id,actor.display_name]).map_err(|e|e.to_string())?;tx.last_insert_rowid()};if quotation_id.is_none(){tx.execute("UPDATE quotations SET quote_no=?1 WHERE id=?2",params![format!("QUO-{id:06}"),id]).map_err(|e|e.to_string())?;}
- let mut subtotal=0_i64;for item in &items{if item.quantity_milli<=0||item.unit_price_minor<0{return Err("راجع كمية وسعر كل صنف".into());}let p:Option<(String,String,i64)>=tx.query_row("SELECT unit,name,is_active FROM products WHERE id=?1",[item.product_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e|e.to_string())?;let Some((unit,name,active))=p else{return Err("صنف غير موجود".into());};if active==0{return Err(format!("الصنف {name} موقوف"));}let line=item.quantity_milli.checked_mul(item.unit_price_minor).and_then(|v|v.checked_add(500)).ok_or("قيمة السطر أكبر من الحد")?/1000;subtotal=subtotal.checked_add(line).ok_or("إجمالي العرض أكبر من الحد")?;tx.execute("INSERT INTO quotation_items(quotation_id,product_id,unit,quantity_milli,unit_price_minor,line_total_minor) VALUES (?1,?2,?3,?4,?5,?6)",params![id,item.product_id,unit,item.quantity_milli,item.unit_price_minor,line]).map_err(|e|e.to_string())?;}if discount_minor>subtotal{return Err("الخصم أكبر من إجمالي العرض".into());}tx.execute("UPDATE quotations SET subtotal_minor=?1,total_minor=?2,updated_at=datetime('now') WHERE id=?3",params![subtotal,subtotal-discount_minor,id]).map_err(|e|e.to_string())?;write_audit(&tx,Some(&actor),if quotation_id.is_some(){"quotation_updated"}else{"quotation_created"},"quotation",Some(&id.to_string()),&format!("total_minor={}",subtotal-discount_minor))?;tx.commit().map_err(|e|e.to_string())?;quotation_row(&conn,id)?.ok_or("تعذر تحميل عرض السعر بعد الحفظ".into())}
+ let mut subtotal=0_i64;for item in &items{if item.quantity_milli<=0||item.unit_price_minor<0{return Err("راجع كمية وسعر كل صنف".into());}let p:Option<(String,String,i64)>=tx.query_row("SELECT unit,name,is_active FROM products WHERE id=?1",[item.product_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e|e.to_string())?;let Some((unit,name,active))=p else{return Err("صنف غير موجود".into());};if active==0{return Err(format!("الصنف {name} موقوف"));}let line=item.quantity_milli.checked_mul(item.unit_price_minor).and_then(|v|v.checked_add(500)).ok_or("قيمة السطر أكبر من الحد")?/1000;subtotal=subtotal.checked_add(line).ok_or("إجمالي العرض أكبر من الحد")?;tx.execute("INSERT INTO quotation_items(quotation_id,product_id,unit,quantity_milli,unit_price_minor,line_total_minor) VALUES (?1,?2,?3,?4,?5,?6)",params![id,item.product_id,unit,item.quantity_milli,item.unit_price_minor,line]).map_err(|e|e.to_string())?;}if discount_minor>subtotal{return Err("الخصم أكبر من إجمالي العرض".into());}let (tax_rate_bps,prices_include_tax)=read_company_tax_settings(&tx)?;let (tax_minor,total)=calculate_document_tax(subtotal,discount_minor,tax_rate_bps,prices_include_tax)?;tx.execute("UPDATE quotations SET subtotal_minor=?1,total_minor=?2,tax_rate_bps=?3,tax_minor=?4,prices_include_tax=?5,updated_at=datetime('now') WHERE id=?6",params![subtotal,total,tax_rate_bps,tax_minor,if prices_include_tax {1} else {0},id]).map_err(|e|e.to_string())?;write_audit(&tx,Some(&actor),if quotation_id.is_some(){"quotation_updated"}else{"quotation_created"},"quotation",Some(&id.to_string()),&format!("total_minor={total}; tax_minor={tax_minor}; tax_rate_bps={tax_rate_bps}"))?;tx.commit().map_err(|e|e.to_string())?;quotation_row(&conn,id)?.ok_or("تعذر تحميل عرض السعر بعد الحفظ".into())}
 #[tauri::command(rename_all="camelCase")]
 fn set_quotation_status(app:tauri::AppHandle,state:State<'_,AppState>,quotation_id:i64,status:String)->Result<String,String>{let actor=require_permission(state.inner(),"quotations.status.manage")?;if !["sent","accepted","rejected","cancelled"].contains(&status.as_str()){return Err("حالة عرض السعر غير مسموحة".into());}let path=database_path(&app)?;initialize_database(&path)?;let mut conn=connect(&path)?;let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|e.to_string())?;let old:Option<(String,String)>=tx.query_row("SELECT quote_no,status FROM quotations WHERE id=?1",[quotation_id],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(|e|e.to_string())?;let Some((number,current))=old else{return Err("عرض السعر غير موجود".into());};let allowed=match current.as_str(){"draft"=>["sent","accepted","rejected","cancelled"].contains(&status.as_str()),"sent"=>["accepted","rejected","cancelled"].contains(&status.as_str()),"accepted"=>["cancelled"].contains(&status.as_str()),_=>false};if !allowed{return Err("لا يمكن الانتقال من الحالة الحالية إلى الحالة المطلوبة".into());}tx.execute("UPDATE quotations SET status=?1,updated_at=datetime('now') WHERE id=?2",params![status,quotation_id]).map_err(|e|e.to_string())?;write_audit(&tx,Some(&actor),"quotation_status_changed","quotation",Some(&quotation_id.to_string()),&format!("quote_no={number}; from={current}; to={status}"))?;tx.commit().map_err(|e|e.to_string())?;Ok(format!("تم تحديث حالة عرض السعر {number}"))}
 #[tauri::command(rename_all="camelCase")]
-fn convert_quotation_to_sale(app:tauri::AppHandle,state:State<'_,AppState>,quotation_id:i64)->Result<String,String>{let actor=require_permission(state.inner(),"quotations.convert")?;if !actor.permissions.iter().any(|p|p=="sales.create")||!actor.permissions.iter().any(|p|p=="sales.view"){return Err("تحتاج صلاحيات إنشاء وعرض فواتير المبيعات".into());}let path=database_path(&app)?;initialize_database(&path)?;let mut conn=connect(&path)?;let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|e.to_string())?;let quote:Option<(String,String,i64,i64,i64)>=tx.query_row("SELECT quote_no,status,customer_id,subtotal_minor,discount_minor FROM quotations WHERE id=?1",[quotation_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional().map_err(|e|e.to_string())?;let Some((quote_no,status,customer_id,subtotal,discount))=quote else{return Err("عرض السعر غير موجود".into());};if status!="accepted"{return Err("يجب قبول عرض السعر قبل تحويله إلى فاتورة بيع".into());}let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM customers WHERE id=?1 AND is_active=1)",[customer_id],|r|Ok(r.get::<_,i64>(0)?!=0)).map_err(|e|e.to_string())?;if !exists{return Err("العميل موقوف؛ أعد تفعيله أولًا".into());}tx.execute("INSERT INTO sales(invoice_no,customer_id,invoice_date,subtotal_minor,discount_minor,total_minor,notes,status,created_by,created_by_username) VALUES (?1,?2,date('now'),?3,?4,?5,?6,'draft',?7,?8)",params![format!("TMP-S-{}",SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e|e.to_string())?.as_nanos()),customer_id,subtotal,discount,subtotal-discount,format!("Converted from quotation {quote_no}"),actor.id,actor.display_name]).map_err(|e|e.to_string())?;let sale_id=tx.last_insert_rowid();let sale_no=format!("SAL-{sale_id:06}");tx.execute("UPDATE sales SET invoice_no=?1 WHERE id=?2",params![sale_no,sale_id]).map_err(|e|e.to_string())?;let items={let mut stmt=tx.prepare("SELECT product_id,unit,quantity_milli,unit_price_minor,line_total_minor FROM quotation_items WHERE quotation_id=?1 ORDER BY id").map_err(|e|e.to_string())?;let rows=stmt.query_map([quotation_id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?,r.get::<_,i64>(4)?))).map_err(|e|e.to_string())?;rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?};if items.is_empty(){return Err("عرض السعر لا يحتوي أصنافًا".into());}for (product_id,unit,qty,price,line) in items{let cost:i64=tx.query_row("SELECT purchase_price_minor FROM products WHERE id=?1",[product_id],|r|r.get(0)).map_err(|e|e.to_string())?;tx.execute("INSERT INTO sale_items(sale_id,product_id,unit,quantity_milli,unit_price_minor,discount_minor,line_total_minor,cost_price_minor) VALUES (?1,?2,?3,?4,?5,0,?6,?7)",params![sale_id,product_id,unit,qty,price,line,cost]).map_err(|e|e.to_string())?;}tx.execute("UPDATE quotations SET status='converted',converted_sale_id=?1,updated_at=datetime('now') WHERE id=?2",params![sale_id,quotation_id]).map_err(|e|e.to_string())?;write_audit(&tx,Some(&actor),"quotation_converted","quotation",Some(&quotation_id.to_string()),&format!("quote_no={quote_no}; sale_invoice={sale_no}"))?;tx.commit().map_err(|e|e.to_string())?;Ok(format!("تم تحويل عرض السعر {quote_no} إلى مسودة فاتورة البيع {sale_no}"))}
+fn convert_quotation_to_sale(app:tauri::AppHandle,state:State<'_,AppState>,quotation_id:i64)->Result<String,String>{let actor=require_permission(state.inner(),"quotations.convert")?;if !actor.permissions.iter().any(|p|p=="sales.create")||!actor.permissions.iter().any(|p|p=="sales.view"){return Err("تحتاج صلاحيات إنشاء وعرض فواتير المبيعات".into());}let path=database_path(&app)?;initialize_database(&path)?;let mut conn=connect(&path)?;let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|e.to_string())?;let quote:Option<(String,String,i64,i64,i64,i64,i64,i64)>=tx.query_row("SELECT quote_no,status,customer_id,subtotal_minor,discount_minor,tax_rate_bps,tax_minor,prices_include_tax FROM quotations WHERE id=?1",[quotation_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?))).optional().map_err(|e|e.to_string())?;let Some((quote_no,status,customer_id,subtotal,discount,tax_rate_bps,tax_minor,prices_include_tax))=quote else{return Err("عرض السعر غير موجود".into());};if status!="accepted"{return Err("يجب قبول عرض السعر قبل تحويله إلى فاتورة بيع".into());}let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM customers WHERE id=?1 AND is_active=1)",[customer_id],|r|Ok(r.get::<_,i64>(0)?!=0)).map_err(|e|e.to_string())?;if !exists{return Err("العميل موقوف؛ أعد تفعيله أولًا".into());}tx.execute("INSERT INTO sales(invoice_no,customer_id,invoice_date,subtotal_minor,discount_minor,total_minor,tax_rate_bps,tax_minor,prices_include_tax,notes,status,created_by,created_by_username) VALUES (?1,?2,date('now'),?3,?4,?5,?6,?7,?8,?9,'draft',?10,?11)",params![format!("TMP-S-{}",SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e|e.to_string())?.as_nanos()),customer_id,subtotal,discount,if prices_include_tax!=0 {subtotal-discount} else {subtotal-discount+tax_minor},tax_rate_bps,tax_minor,prices_include_tax,format!("Converted from quotation {quote_no}"),actor.id,actor.display_name]).map_err(|e|e.to_string())?;let sale_id=tx.last_insert_rowid();let sale_no=format!("SAL-{sale_id:06}");tx.execute("UPDATE sales SET invoice_no=?1 WHERE id=?2",params![sale_no,sale_id]).map_err(|e|e.to_string())?;let items={let mut stmt=tx.prepare("SELECT product_id,unit,quantity_milli,unit_price_minor,line_total_minor FROM quotation_items WHERE quotation_id=?1 ORDER BY id").map_err(|e|e.to_string())?;let rows=stmt.query_map([quotation_id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?,r.get::<_,i64>(4)?))).map_err(|e|e.to_string())?;rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?};if items.is_empty(){return Err("عرض السعر لا يحتوي أصنافًا".into());}for (product_id,unit,qty,price,line) in items{let cost:i64=tx.query_row("SELECT purchase_price_minor FROM products WHERE id=?1",[product_id],|r|r.get(0)).map_err(|e|e.to_string())?;tx.execute("INSERT INTO sale_items(sale_id,product_id,unit,quantity_milli,unit_price_minor,discount_minor,line_total_minor,cost_price_minor) VALUES (?1,?2,?3,?4,?5,0,?6,?7)",params![sale_id,product_id,unit,qty,price,line,cost]).map_err(|e|e.to_string())?;}tx.execute("UPDATE quotations SET status='converted',converted_sale_id=?1,updated_at=datetime('now') WHERE id=?2",params![sale_id,quotation_id]).map_err(|e|e.to_string())?;write_audit(&tx,Some(&actor),"quotation_converted","quotation",Some(&quotation_id.to_string()),&format!("quote_no={quote_no}; sale_invoice={sale_no}"))?;tx.commit().map_err(|e|e.to_string())?;Ok(format!("تم تحويل عرض السعر {quote_no} إلى مسودة فاتورة البيع {sale_no}"))}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1430,7 +1495,7 @@ struct InvoiceItemInput { product_id: i64, quantity_milli: i64, unit_price_minor
 #[serde(rename_all = "camelCase")]
 struct InvoiceRow {
     id: i64, invoice_no: String, party_name: String, invoice_date: String,
-    subtotal_minor: i64, discount_minor: i64, total_minor: i64, paid_minor: i64,
+    subtotal_minor: i64, discount_minor: i64, total_minor: i64, tax_rate_bps: i64, tax_minor: i64, prices_include_tax: bool, paid_minor: i64,
     notes: Option<String>, status: String, item_count: i64, created_by_name: Option<String>, created_at: String, party_id: Option<i64>,
 }
 
@@ -1451,8 +1516,8 @@ fn invoice_context(invoice_type: &str) -> Result<InvoiceContext,String> {
     }
 }
 fn invoice_row_from_query(conn: &Connection, ctx: InvoiceContext, invoice_id: i64) -> Result<Option<InvoiceRow>,String> {
-    let sql = format!("SELECT i.id,i.invoice_no,COALESCE(p.name,CASE WHEN i.{party_col} IS NULL THEN 'عميل نقدي' ELSE '' END),i.invoice_date,i.subtotal_minor,i.discount_minor,i.total_minor,COALESCE(i.paid_minor,0),i.notes,i.status,(SELECT COUNT(*) FROM {lines} il WHERE il.{fk}=i.id),COALESCE(i.created_by_username,u.display_name),i.created_at,i.{party_col} FROM {header} i LEFT JOIN {party} p ON p.id=i.{party_col} LEFT JOIN users u ON u.id=i.created_by WHERE i.id=?1",header=ctx.header,party=ctx.party_table,party_col=ctx.party_column,lines=ctx.lines,fk=if ctx.kind=="purchase" {"purchase_invoice_id"} else {"sale_id"});
-    conn.query_row(&sql,[invoice_id],|r|Ok(InvoiceRow{id:r.get(0)?,invoice_no:r.get(1)?,party_name:r.get(2)?,invoice_date:r.get(3)?,subtotal_minor:r.get(4)?,discount_minor:r.get(5)?,total_minor:r.get(6)?,paid_minor:r.get(7)?,notes:r.get(8)?,status:r.get(9)?,item_count:r.get(10)?,created_by_name:r.get(11)?,created_at:r.get(12)?,party_id:r.get(13)?})).optional().map_err(|e|e.to_string())
+    let sql = format!("SELECT i.id,i.invoice_no,COALESCE(p.name,CASE WHEN i.{party_col} IS NULL THEN 'عميل نقدي' ELSE '' END),i.invoice_date,i.subtotal_minor,i.discount_minor,i.total_minor,i.tax_rate_bps,i.tax_minor,i.prices_include_tax,COALESCE(i.paid_minor,0),i.notes,i.status,(SELECT COUNT(*) FROM {lines} il WHERE il.{fk}=i.id),COALESCE(i.created_by_username,u.display_name),i.created_at,i.{party_col} FROM {header} i LEFT JOIN {party} p ON p.id=i.{party_col} LEFT JOIN users u ON u.id=i.created_by WHERE i.id=?1",header=ctx.header,party=ctx.party_table,party_col=ctx.party_column,lines=ctx.lines,fk=if ctx.kind=="purchase" {"purchase_invoice_id"} else {"sale_id"});
+    conn.query_row(&sql,[invoice_id],|r|Ok(InvoiceRow{id:r.get(0)?,invoice_no:r.get(1)?,party_name:r.get(2)?,invoice_date:r.get(3)?,subtotal_minor:r.get(4)?,discount_minor:r.get(5)?,total_minor:r.get(6)?,tax_rate_bps:r.get(7)?,tax_minor:r.get(8)?,prices_include_tax:r.get::<_,i64>(9)?!=0,paid_minor:r.get(10)?,notes:r.get(11)?,status:r.get(12)?,item_count:r.get(13)?,created_by_name:r.get(14)?,created_at:r.get(15)?,party_id:r.get(16)?})).optional().map_err(|e|e.to_string())
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -1461,9 +1526,9 @@ fn list_invoices(app: tauri::AppHandle, state: State<'_, AppState>, invoice_type
     let path = database_path(&app)?; initialize_database(&path)?; let conn = connect(&path)?;
     let q=query.unwrap_or_default(); let q=q.trim(); let like=format!("%{q}%");
     let fk=if ctx.kind=="purchase" {"purchase_invoice_id"} else {"sale_id"};
-    let sql=format!("SELECT i.id,i.invoice_no,COALESCE(p.name,CASE WHEN i.{party_col} IS NULL THEN 'عميل نقدي' ELSE '' END),i.invoice_date,i.subtotal_minor,i.discount_minor,i.total_minor,COALESCE(i.paid_minor,0),i.notes,i.status,(SELECT COUNT(*) FROM {lines} il WHERE il.{fk}=i.id),COALESCE(i.created_by_username,u.display_name),i.created_at,i.{party_col} FROM {header} i LEFT JOIN {party} p ON p.id=i.{party_col} LEFT JOIN users u ON u.id=i.created_by WHERE (?1='' OR i.invoice_no LIKE ?2 OR COALESCE(p.name,'') LIKE ?2 OR COALESCE(i.notes,'') LIKE ?2) ORDER BY i.id DESC LIMIT 500",party_col=ctx.party_column,lines=ctx.lines,fk=fk,header=ctx.header,party=ctx.party_table);
+    let sql=format!("SELECT i.id,i.invoice_no,COALESCE(p.name,CASE WHEN i.{party_col} IS NULL THEN 'عميل نقدي' ELSE '' END),i.invoice_date,i.subtotal_minor,i.discount_minor,i.total_minor,i.tax_rate_bps,i.tax_minor,i.prices_include_tax,COALESCE(i.paid_minor,0),i.notes,i.status,(SELECT COUNT(*) FROM {lines} il WHERE il.{fk}=i.id),COALESCE(i.created_by_username,u.display_name),i.created_at,i.{party_col} FROM {header} i LEFT JOIN {party} p ON p.id=i.{party_col} LEFT JOIN users u ON u.id=i.created_by WHERE (?1='' OR i.invoice_no LIKE ?2 OR COALESCE(p.name,'') LIKE ?2 OR COALESCE(i.notes,'') LIKE ?2) ORDER BY i.id DESC LIMIT 500",party_col=ctx.party_column,lines=ctx.lines,fk=fk,header=ctx.header,party=ctx.party_table);
     let mut stmt=conn.prepare(&sql).map_err(|e|e.to_string())?;
-    let rows=stmt.query_map(params![q,like],|r|Ok(InvoiceRow{id:r.get(0)?,invoice_no:r.get(1)?,party_name:r.get(2)?,invoice_date:r.get(3)?,subtotal_minor:r.get(4)?,discount_minor:r.get(5)?,total_minor:r.get(6)?,paid_minor:r.get(7)?,notes:r.get(8)?,status:r.get(9)?,item_count:r.get(10)?,created_by_name:r.get(11)?,created_at:r.get(12)?,party_id:r.get(13)?})).map_err(|e|e.to_string())?;
+    let rows=stmt.query_map(params![q,like],|r|Ok(InvoiceRow{id:r.get(0)?,invoice_no:r.get(1)?,party_name:r.get(2)?,invoice_date:r.get(3)?,subtotal_minor:r.get(4)?,discount_minor:r.get(5)?,total_minor:r.get(6)?,tax_rate_bps:r.get(7)?,tax_minor:r.get(8)?,prices_include_tax:r.get::<_,i64>(9)?!=0,paid_minor:r.get(10)?,notes:r.get(11)?,status:r.get(12)?,item_count:r.get(13)?,created_by_name:r.get(14)?,created_at:r.get(15)?,party_id:r.get(16)?})).map_err(|e|e.to_string())?;
     rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
 }
 
@@ -1508,7 +1573,6 @@ fn create_invoice(app: tauri::AppHandle, state: State<'_, AppState>, invoice_typ
     tx.execute(&insert_header,params![temp_no,party_id,invoice_date.trim(),discount_minor,notes,actor.id,actor.display_name]).map_err(|e|e.to_string())?;
     let id=tx.last_insert_rowid();let invoice_no=format!("{}-{:06}",ctx.prefix,id);
     tx.execute(&format!("UPDATE {header} SET invoice_no=?1 WHERE id=?2",header=ctx.header),params![invoice_no,id]).map_err(|e|e.to_string())?;
-    let fk=if ctx.kind=="purchase" {"purchase_invoice_id"} else {"sale_id"};
     let mut subtotal=0_i64;
     for item in &items {
         if item.quantity_milli<=0 {return Err("كل كمية يجب أن تكون أكبر من صفر".into());}
@@ -1530,9 +1594,10 @@ fn create_invoice(app: tauri::AppHandle, state: State<'_, AppState>, invoice_typ
         }
     }
     if discount_minor>subtotal {return Err("خصم الفاتورة لا يمكن أن يتجاوز الإجمالي".into());}
-    let total=subtotal-discount_minor;
-    tx.execute(&format!("UPDATE {header} SET subtotal_minor=?1,total_minor=?2,updated_at=datetime('now') WHERE id=?3",header=ctx.header),params![subtotal,total,id]).map_err(|e|e.to_string())?;
-    write_audit(&tx,Some(&actor),if ctx.kind=="purchase" {"purchase_invoice_created"} else {"sale_invoice_created"},if ctx.kind=="purchase" {"purchase_invoice"} else {"sale_invoice"},Some(&id.to_string()),&format!("invoice_no={invoice_no}; status=draft; items={}; total_minor={total}",items.len()))?;
+    let (tax_rate_bps,prices_include_tax)=read_company_tax_settings(&tx)?;
+    let (tax_minor,total)=calculate_document_tax(subtotal,discount_minor,tax_rate_bps,prices_include_tax)?;
+    tx.execute(&format!("UPDATE {header} SET subtotal_minor=?1,total_minor=?2,tax_rate_bps=?3,tax_minor=?4,prices_include_tax=?5,updated_at=datetime('now') WHERE id=?6",header=ctx.header),params![subtotal,total,tax_rate_bps,tax_minor,if prices_include_tax {1} else {0},id]).map_err(|e|e.to_string())?;
+    write_audit(&tx,Some(&actor),if ctx.kind=="purchase" {"purchase_invoice_created"} else {"sale_invoice_created"},if ctx.kind=="purchase" {"purchase_invoice"} else {"sale_invoice"},Some(&id.to_string()),&format!("invoice_no={invoice_no}; status=draft; items={}; total_minor={total}; tax_minor={tax_minor}; tax_rate_bps={tax_rate_bps}",items.len()))?;
     tx.commit().map_err(|e|e.to_string())?;
     invoice_row_from_query(&conn,ctx,id)?.ok_or("تم إنشاء الفاتورة لكن تعذر تحميلها".into())
 }
@@ -1583,9 +1648,11 @@ fn update_invoice_draft(app: tauri::AppHandle, state: State<'_, AppState>, invoi
         }
     }
     if discount_minor>subtotal {return Err("خصم الفاتورة لا يمكن أن يتجاوز الإجمالي".into());}
-    let update=format!("UPDATE {header} SET {party_col}=?1,invoice_date=?2,subtotal_minor=?3,discount_minor=?4,total_minor=?5,notes=?6,updated_at=datetime('now') WHERE id=?7",header=ctx.header,party_col=ctx.party_column);
-    tx.execute(&update,params![party_id,invoice_date.trim(),subtotal,discount_minor,subtotal-discount_minor,notes,invoice_id]).map_err(|e|e.to_string())?;
-    write_audit(&tx,Some(&actor),if ctx.kind=="purchase" {"purchase_invoice_updated"} else {"sale_invoice_updated"},if ctx.kind=="purchase" {"purchase_invoice"} else {"sale_invoice"},Some(&invoice_id.to_string()),&format!("invoice_no={invoice_no}; draft revised; items={}; total_minor={}",items.len(),subtotal-discount_minor))?;
+    let (tax_rate_bps,prices_include_tax)=read_company_tax_settings(&tx)?;
+    let (tax_minor,total)=calculate_document_tax(subtotal,discount_minor,tax_rate_bps,prices_include_tax)?;
+    let update=format!("UPDATE {header} SET {party_col}=?1,invoice_date=?2,subtotal_minor=?3,discount_minor=?4,total_minor=?5,tax_rate_bps=?6,tax_minor=?7,prices_include_tax=?8,notes=?9,updated_at=datetime('now') WHERE id=?10",header=ctx.header,party_col=ctx.party_column);
+    tx.execute(&update,params![party_id,invoice_date.trim(),subtotal,discount_minor,total,tax_rate_bps,tax_minor,if prices_include_tax {1} else {0},notes,invoice_id]).map_err(|e|e.to_string())?;
+    write_audit(&tx,Some(&actor),if ctx.kind=="purchase" {"purchase_invoice_updated"} else {"sale_invoice_updated"},if ctx.kind=="purchase" {"purchase_invoice"} else {"sale_invoice"},Some(&invoice_id.to_string()),&format!("invoice_no={invoice_no}; draft revised; items={}; total_minor={}; tax_minor={}; tax_rate_bps={tax_rate_bps}",items.len(),total,tax_minor))?;
     tx.commit().map_err(|e|e.to_string())?;
     invoice_row_from_query(&conn,ctx,invoice_id)?.ok_or("تعذر تحميل المسودة المعدلة".into())
 }
@@ -1876,7 +1943,7 @@ pub fn run() {
             initialize_database(&path).map_err(std::io::Error::other)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![app_info, auth_status, create_initial_admin, login, logout, list_users, create_user, update_user_profile, set_user_active, set_user_role, list_user_permissions, set_user_permissions, reset_user_password, change_own_password, list_audit_log, create_product, find_product_by_barcode, get_dashboard_inventory_counts, list_products, search_products, list_inactive_products, search_inactive_products, reactivate_product, update_product, add_alternate_barcode, deactivate_product, list_stock, list_stock_movements, record_stock_movement, list_parties, save_party, set_party_active, get_company_branding, get_company_profile, save_company_profile, list_payable_invoices, record_payment, list_payments, cashbox_adjustment, list_cashbook, get_financial_summary, list_quotations, get_quotation_details, save_quotation, set_quotation_status, convert_quotation_to_sale, list_invoices, get_invoice_details, create_invoice, update_invoice_draft, post_invoice, cancel_invoice, create_backup, list_restore_points, delete_restore_point, restore_backup])
+        .invoke_handler(tauri::generate_handler![app_info, auth_status, create_initial_admin, login, logout, list_users, create_user, update_user_profile, set_user_active, set_user_role, list_user_permissions, set_user_permissions, reset_user_password, change_own_password, list_audit_log, create_product, find_product_by_barcode, get_dashboard_inventory_counts, list_products, search_products, list_inactive_products, search_inactive_products, reactivate_product, update_product, add_alternate_barcode, deactivate_product, list_stock, list_stock_movements, record_stock_movement, list_parties, save_party, set_party_active, get_company_branding, get_company_profile, get_company_printing_profile, save_company_profile, list_payable_invoices, record_payment, list_payments, cashbox_adjustment, list_cashbook, get_financial_summary, list_quotations, get_quotation_details, save_quotation, set_quotation_status, convert_quotation_to_sale, list_invoices, get_invoice_details, create_invoice, update_invoice_draft, post_invoice, cancel_invoice, create_backup, list_restore_points, delete_restore_point, restore_backup])
         .run(tauri::generate_context!())
         .expect("خطأ أثناء تشغيل مدار");
 }
