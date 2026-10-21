@@ -410,9 +410,9 @@ fn seed_access_control(conn: &Connection) -> Result<(), String> {
     // Detailed permission defaults; insert-only so existing user/custom overrides are never overwritten.
     let admin_detailed = ["products.view","products.create","products.edit","products.deactivate","products.reactivate","products.barcode.manage","products.purchase_price.edit","products.sale_price.edit","stock.view","stock.movement.record","backup.view_points","backup.create","backup.restore","backup.points.delete","users.view","users.profile.edit","users.create","users.status.manage","users.role.manage","users.permissions.manage","users.password.reset","audit.view","customers.view","customers.create","customers.edit","customers.status.manage","suppliers.view","suppliers.create","suppliers.edit","suppliers.status.manage","purchases.view","purchases.create","purchases.edit_draft","purchases.post","purchases.cancel","sales.view","sales.create","sales.edit_draft","sales.post","sales.cancel","sales.price.override","company.settings.view","company.settings.manage","quotations.view","quotations.create","quotations.edit","quotations.status.manage","quotations.convert","finance.view","finance.payment.record","cashbox.view","cashbox.adjust","reports.view"];
     let manager_detailed = ["products.view","products.create","products.edit","products.deactivate","products.reactivate","products.barcode.manage","products.purchase_price.edit","products.sale_price.edit","stock.view","stock.movement.record","backup.view_points","backup.create","backup.restore","backup.points.delete","audit.view","customers.view","customers.create","customers.edit","customers.status.manage","suppliers.view","suppliers.create","suppliers.edit","suppliers.status.manage","purchases.view","purchases.create","purchases.edit_draft","purchases.post","purchases.cancel","sales.view","sales.create","sales.edit_draft","sales.post","sales.cancel","sales.price.override","company.settings.view","quotations.view","quotations.create","quotations.edit","quotations.status.manage","quotations.convert","finance.view","finance.payment.record","cashbox.view","cashbox.adjust","reports.view"];
-    let warehouse_detailed = ["products.view","stock.view","stock.movement.record","suppliers.view","purchases.view","company.settings.view"];
-    let sales_detailed = ["products.view","stock.view","customers.view","customers.create","sales.view","sales.create","sales.edit_draft","sales.post","company.settings.view","quotations.view","quotations.create","quotations.edit","quotations.status.manage","quotations.convert","finance.view","finance.payment.record","cashbox.view","reports.view"];
-    let viewer_detailed = ["products.view","stock.view","company.settings.view"];
+    let warehouse_detailed = ["products.view","stock.view","stock.movement.record","suppliers.view","purchases.view"];
+    let sales_detailed = ["products.view","stock.view","customers.view","customers.create","sales.view","sales.create","sales.edit_draft","sales.post","quotations.view","quotations.create","quotations.edit","quotations.status.manage","quotations.convert","finance.view","finance.payment.record","cashbox.view","reports.view"];
+    let viewer_detailed = ["products.view","stock.view"];
     let detailed_matrices: [(&str, &[&str]); 5] = [("admin", &admin_detailed), ("manager", &manager_detailed), ("warehouse", &warehouse_detailed), ("sales", &sales_detailed), ("viewer", &viewer_detailed)];
     for (role, items) in detailed_matrices {
         let role_id: i64 = conn.query_row("SELECT id FROM roles WHERE code=?1", [role], |r| r.get(0)).map_err(|e| e.to_string())?;
@@ -420,6 +420,12 @@ fn seed_access_control(conn: &Connection) -> Result<(), String> {
             conn.execute("INSERT OR IGNORE INTO role_permissions(role_id,permission_code) VALUES (?1,?2)", params![role_id,item]).map_err(|e| e.to_string())?;
         }
     }
+    // Company-profile viewing is a default privilege only for managers and system administrators.
+    // Explicit per-user overrides remain available through the detailed permission editor.
+    conn.execute(
+        "DELETE FROM role_permissions WHERE permission_code='company.settings.view' AND role_id IN (SELECT id FROM roles WHERE code NOT IN ('admin','manager'))",
+        [],
+    ).map_err(|e| e.to_string())?;
     Ok(())
 }
 
