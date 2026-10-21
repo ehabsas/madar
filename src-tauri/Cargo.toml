@@ -18,7 +18,6 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 argon2 = "0.5"
-# Enable OsRng for generating password-hash salts.
 rand_core = { version = "0.6", features = ["getrandom"] }
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 thiserror = "2"
