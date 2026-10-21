@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS stock_movements (
     reference_type TEXT,
     reference_id INTEGER,
     notes TEXT,
+    unit TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_stock_movements_product_warehouse ON stock_movements(product_id, warehouse_id, created_at);
@@ -114,9 +115,11 @@ CREATE TABLE IF NOT EXISTS audit_log (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+INSERT OR IGNORE INTO warehouses(code,name) VALUES ('MAIN', 'المخزن الرئيسي');
+
 INSERT OR IGNORE INTO app_settings(key, value) VALUES
 ('app_name', 'مدار'),
-('database_schema_version', '2'),
+('database_schema_version', '3'),
 ('barcode_prefix', 'MAD'),
 ('barcode_auto_generate', 'true'),
 ('backup_reminder_enabled', 'true');

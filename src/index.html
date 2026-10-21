@@ -5,12 +5,12 @@
 :root[data-theme="dark"]{color-scheme:dark;--bg:#101722;--surface:#182332;--surface-soft:#202d3d;--text:#e7edf5;--muted:#a8b6c8;--border:#334357;--input:#111c29;--nav:#182332;--accent:#46c8bb;--accent-soft:#203f42;--shadow:0 8px 28px rgba(0,0,0,.18)}
 *{box-sizing:border-box}html{scroll-padding-top:120px}body{margin:0;background:var(--bg);color:var(--text);font-family:Tahoma,Arial,sans-serif;transition:background .2s,color .2s}
 header{position:sticky;top:0;z-index:100;background:#14243b;color:white;padding:12px clamp(14px,3vw,30px);display:flex;justify-content:space-between;align-items:center;gap:16px;box-shadow:0 4px 18px rgba(0,0,0,.16)}.brand{display:flex;align-items:center;gap:12px;min-width:0}.mark{width:42px;height:42px;flex:0 0 auto;border-radius:12px;background:#21b7ad;color:#14243b;display:grid;place-items:center;font-size:24px;font-weight:bold}h1{margin:0;font-size:23px}header p{margin:4px 0 0;color:#c6d5e8;font-size:13px}.header-actions{display:flex;align-items:center;gap:10px}.theme-btn{border:1px solid #53657b;background:#243850;color:white;border-radius:10px;padding:9px 12px;font:inherit;cursor:pointer;white-space:nowrap}.pill{display:inline-block;padding:6px 10px;border-radius:99px;background:var(--accent-soft);color:var(--accent);font-size:13px;white-space:nowrap}
-.app-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:22px;max-width:1400px;margin:22px auto;padding:0 20px;align-items:start}.sidebar{position:sticky;top:94px;background:var(--nav);border:1px solid var(--border);border-radius:16px;padding:12px;box-shadow:var(--shadow)}.nav-label{font-size:12px;color:var(--muted);padding:9px 12px 7px}.nav-list{display:grid;gap:5px}.nav-btn{display:flex;align-items:center;gap:10px;width:100%;border:0;border-radius:10px;padding:12px;text-align:right;background:transparent;color:var(--text);font:inherit;cursor:pointer}.nav-btn:hover{background:var(--surface-soft)}.nav-btn.active{background:var(--accent-soft);color:var(--accent);font-weight:bold}.nav-icon{width:22px;text-align:center;font-size:17px}.main-content{min-width:0;min-height:65vh}.page-title{margin:3px 0 16px}.page-title h2{font-size:25px;margin:0 0 5px}.page-title p{margin:0;color:var(--muted);line-height:1.7}.page[hidden]{display:none!important}.panel{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:22px;margin-bottom:18px;box-shadow:var(--shadow)}.panel h2{margin-top:0}.muted{color:var(--muted);line-height:1.7}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}.field{display:flex;flex-direction:column;gap:7px}.field input{border:1px solid var(--border);border-radius:9px;padding:12px;font:inherit;min-width:0;background:var(--input);color:var(--text)}.btn{border:0;border-radius:9px;padding:12px 18px;background:#087d76;color:white;font:inherit;cursor:pointer}.btn:disabled{opacity:.6;cursor:wait}.btn.secondary{background:var(--surface-soft);color:var(--text);border:1px solid var(--border)}.btn.danger{background:#a92f3b;color:white}.backup-note{font-size:14px;margin-top:8px}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}.status{margin-top:12px;white-space:pre-wrap}.tablewrap{overflow:auto}table{border-collapse:collapse;width:100%;min-width:600px}th,td{text-align:right;padding:11px;border-bottom:1px solid var(--border)}th{background:var(--surface-soft)}code{direction:ltr;display:inline-block;font-size:14px;overflow-wrap:anywhere}.restore-list{display:grid;gap:10px;margin-top:14px}.restore-item{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--surface-soft)}.restore-meta{display:grid;gap:5px}.restore-meta strong{overflow-wrap:anywhere}.restore-empty{padding:14px;background:var(--surface-soft);border-radius:10px}.confirm-overlay{position:fixed;inset:0;background:rgba(10,20,35,.68);display:grid;place-items:center;padding:20px;z-index:9999}.confirm-overlay[hidden]{display:none}.confirm-box{width:min(620px,100%);max-height:calc(100vh - 40px);overflow-y:auto;background:var(--surface);color:var(--text);border-radius:16px;padding:24px;box-shadow:0 20px 70px rgba(0,0,0,.35)}.confirm-box h3{margin-top:0}.confirm-box p{line-height:1.8;color:var(--muted);white-space:pre-wrap}.confirm-actions{display:flex;gap:10px;justify-content:flex-start;flex-wrap:wrap;margin-top:20px}.product-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px}.product-toolbar h2{margin:0 0 5px}.product-toolbar p{margin:0}.product-toolbar-actions{align-items:center}.stats-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:18px}.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:15px;padding:18px;box-shadow:var(--shadow)}.stat-label{color:var(--muted);font-size:13px}.stat-value{font-size:27px;font-weight:bold;margin-top:10px}.quick-actions{display:flex;gap:10px;flex-wrap:wrap}footer{text-align:center;padding:22px;color:var(--muted);font-size:13px}
+.app-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:22px;max-width:1400px;margin:22px auto;padding:0 20px;align-items:start}.sidebar{position:sticky;top:94px;background:var(--nav);border:1px solid var(--border);border-radius:16px;padding:12px;box-shadow:var(--shadow)}.nav-label{font-size:12px;color:var(--muted);padding:9px 12px 7px}.nav-list{display:grid;gap:5px}.nav-btn{display:flex;align-items:center;gap:10px;width:100%;border:0;border-radius:10px;padding:12px;text-align:right;background:transparent;color:var(--text);font:inherit;cursor:pointer}.nav-btn:hover{background:var(--surface-soft)}.nav-btn.active{background:var(--accent-soft);color:var(--accent);font-weight:bold}.nav-icon{width:22px;text-align:center;font-size:17px}.main-content{min-width:0;min-height:65vh}.page-title{margin:3px 0 16px}.page-title h2{font-size:25px;margin:0 0 5px}.page-title p{margin:0;color:var(--muted);line-height:1.7}.page[hidden]{display:none!important}.panel{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:22px;margin-bottom:18px;box-shadow:var(--shadow)}.panel h2{margin-top:0}.muted{color:var(--muted);line-height:1.7}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}.field{display:flex;flex-direction:column;gap:7px}.field input,.field select{border:1px solid var(--border);border-radius:9px;padding:12px;font:inherit;min-width:0;background:var(--input);color:var(--text)}.btn{border:0;border-radius:9px;padding:12px 18px;background:#087d76;color:white;font:inherit;cursor:pointer}.btn:disabled{opacity:.6;cursor:wait}.btn.secondary{background:var(--surface-soft);color:var(--text);border:1px solid var(--border)}.btn.danger{background:#a92f3b;color:white}.backup-note{font-size:14px;margin-top:8px}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}.status{margin-top:12px;white-space:pre-wrap}.tablewrap{overflow:auto}table{border-collapse:collapse;width:100%;min-width:600px}th,td{text-align:right;padding:11px;border-bottom:1px solid var(--border)}th{background:var(--surface-soft)}code{direction:ltr;display:inline-block;font-size:14px;overflow-wrap:anywhere}.restore-list{display:grid;gap:10px;margin-top:14px}.restore-item{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--surface-soft)}.restore-meta{display:grid;gap:5px}.restore-meta strong{overflow-wrap:anywhere}.restore-empty{padding:14px;background:var(--surface-soft);border-radius:10px}.confirm-overlay{position:fixed;inset:0;background:rgba(10,20,35,.68);display:grid;place-items:center;padding:20px;z-index:9999}.confirm-overlay[hidden]{display:none}.confirm-box{width:min(620px,100%);max-height:calc(100vh - 40px);overflow-y:auto;background:var(--surface);color:var(--text);border-radius:16px;padding:24px;box-shadow:0 20px 70px rgba(0,0,0,.35)}.confirm-box h3{margin-top:0}.confirm-box p{line-height:1.8;color:var(--muted);white-space:pre-wrap}.confirm-actions{display:flex;gap:10px;justify-content:flex-start;flex-wrap:wrap;margin-top:20px}.product-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px}.product-toolbar h2{margin:0 0 5px}.product-toolbar p{margin:0}.product-toolbar-actions{align-items:center}.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px}.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:15px;padding:18px;box-shadow:var(--shadow)}.stat-label{color:var(--muted);font-size:13px}.stat-value{font-size:27px;font-weight:bold;margin-top:10px}.quick-actions{display:flex;gap:10px;flex-wrap:wrap}footer{text-align:center;padding:22px;color:var(--muted);font-size:13px}
 @media(max-width:800px){.app-layout{grid-template-columns:1fr;margin:14px auto;padding:0 12px;gap:12px}.sidebar{top:78px;z-index:50;padding:7px;overflow-x:auto}.nav-label{display:none}.nav-list{display:flex;min-width:max-content}.nav-btn{width:auto;padding:10px 12px}.nav-btn .nav-text{white-space:nowrap}.stats-grid{grid-template-columns:1fr}.product-toolbar{align-items:stretch;flex-direction:column}.product-toolbar-actions .btn{flex:1}.panel{padding:16px}header{padding:10px 12px}h1{font-size:20px}header p{display:none}.header-actions .pill{display:none}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 </style></head><body>
 <header><div class="brand"><div class="mark">م</div><div><h1>مدار</h1><p>نظام إدارة المبيعات والمخازن والحسابات</p></div></div><div class="header-actions"><span class="pill">نسخة تطوير 0.2.0</span><button id="themeToggle" class="theme-btn" type="button" aria-label="تبديل الوضع اللوني">🌙 الوضع الداكن</button></div></header>
-<div class="app-layout"><aside class="sidebar" aria-label="القائمة الرئيسية"><div class="nav-label">القائمة الرئيسية</div><nav class="nav-list"><button class="nav-btn active" data-page="dashboard" type="button"><span class="nav-icon">⌂</span><span class="nav-text">الرئيسية</span></button><button class="nav-btn" data-page="products" type="button"><span class="nav-icon">▦</span><span class="nav-text">المنتجات</span></button><button class="nav-btn" data-page="backup" type="button"><span class="nav-icon">⤓</span><span class="nav-text">النسخ الاحتياطي</span></button><button class="nav-btn" data-page="help" type="button"><span class="nav-icon">ⓘ</span><span class="nav-text">المساعدة</span></button></nav></aside><main class="main-content"><section class="page" data-page-content="dashboard"><div class="page-title"><h2>لوحة التحكم</h2><p>نظرة سريعة على مدار، مع وصول مباشر للأقسام الأساسية.</p></div><div class="stats-grid"><article class="stat-card"><div class="stat-label">الأصناف المسجلة</div><div class="stat-value" id="dashboardProductCount">—</div></article><article class="stat-card"><div class="stat-label">حالة قاعدة البيانات</div><div class="stat-value" style="font-size:20px">محلية</div></article><article class="stat-card"><div class="stat-label">نظام الباركود</div><div class="stat-value" style="font-size:20px">مفعّل</div></article></div><section class="panel"><h2>اختصارات سريعة</h2><p class="muted">اختار القسم اللي عايز تشتغل فيه.</p><div class="quick-actions"><button class="btn" type="button" data-go-page="products">إدارة المنتجات</button><button class="btn secondary" type="button" data-go-page="backup">النسخ الاحتياطي والاستعادة</button><button class="btn secondary" type="button" data-go-page="help">المساعدة وقواعد الباركود</button></div></section><section class="panel"><h2>حالة النظام</h2><p class="muted">يعمل مدار بقاعدة بيانات SQLite محلية. احرص على إنشاء نسخة احتياطية دورية قبل أي تغييرات كبيرة على البيانات.</p></section></section>
+<div class="app-layout"><aside class="sidebar" aria-label="القائمة الرئيسية"><div class="nav-label">القائمة الرئيسية</div><nav class="nav-list"><button class="nav-btn active" data-page="dashboard" type="button"><span class="nav-icon">⌂</span><span class="nav-text">الرئيسية</span></button><button class="nav-btn" data-page="products" type="button"><span class="nav-icon">▦</span><span class="nav-text">المنتجات</span></button><button class="nav-btn" data-page="stock" type="button"><span class="nav-icon">▤</span><span class="nav-text">المخزون</span></button><button class="nav-btn" data-page="backup" type="button"><span class="nav-icon">⤓</span><span class="nav-text">النسخ الاحتياطي</span></button><button class="nav-btn" data-page="help" type="button"><span class="nav-icon">ⓘ</span><span class="nav-text">المساعدة</span></button></nav></aside><main class="main-content"><section class="page" data-page-content="dashboard"><div class="page-title"><h2>لوحة التحكم</h2><p>نظرة سريعة على مدار، مع وصول مباشر للأقسام الأساسية.</p></div><div class="stats-grid"><article class="stat-card"><div class="stat-label">الأصناف المسجلة</div><div class="stat-value" id="dashboardProductCount">—</div></article><article class="stat-card"><div class="stat-label">حالة قاعدة البيانات</div><div class="stat-value" style="font-size:20px">محلية</div></article><article class="stat-card"><div class="stat-label">نظام الباركود</div><div class="stat-value" style="font-size:20px">مفعّل</div></article><article class="stat-card"><div class="stat-label">أصناف لها رصيد بالمخزون</div><div class="stat-value" id="dashboardInStockProducts">—</div></article></div><section class="panel"><h2>اختصارات سريعة</h2><p class="muted">اختار القسم اللي عايز تشتغل فيه.</p><div class="quick-actions"><button class="btn" type="button" data-go-page="products">إدارة المنتجات</button><button class="btn secondary" type="button" data-go-page="stock">إدارة المخزون</button><button class="btn secondary" type="button" data-go-page="backup">النسخ الاحتياطي والاستعادة</button><button class="btn secondary" type="button" data-go-page="help">المساعدة وقواعد الباركود</button></div></section><section class="panel"><h2>حالة النظام</h2><p class="muted">يعمل مدار بقاعدة بيانات SQLite محلية. احرص على إنشاء نسخة احتياطية دورية قبل أي تغييرات كبيرة على البيانات.</p></section></section>
 <section class="page" data-page-content="products" hidden>
  <div class="page-title"><h2>المنتجات</h2><p>إضافة الأصناف والبحث فيها وتعديلها وإيقافها بأمان.</p></div>
  <section class="panel">
@@ -25,6 +25,31 @@ header{position:sticky;top:0;z-index:100;background:#14243b;color:white;padding:
   <div class="status muted" id="status" role="status" aria-live="polite"></div>
   <div class="tablewrap"><table><thead><tr><th>الكود</th><th>اسم الصنف</th><th>الوحدة</th><th>الباركود الأساسي</th><th>سعر الشراء</th><th>سعر البيع</th><th>الإجراءات</th></tr></thead><tbody id="products"><tr><td colspan="7" class="muted">شغّل التطبيق لتحميل البيانات.</td></tr></tbody></table></div>
  </section>
+</section>
+<section class="page" data-page-content="stock" hidden>
+ <div class="page-title"><h2>المخزون</h2><p>متابعة أرصدة الأصناف وسجل حركات الوارد والمنصرف. كل حركة تُحفظ في سجل مستقل، والرصيد محسوب من الحركات.</p></div>
+ <section class="panel">
+  <div class="product-toolbar"><div><h2>أرصدة الأصناف</h2><p class="muted">يعرض الرصيد الحالي لكل صنف، بما في ذلك الأصناف الموقوفة حتى لا تضيع أرصدتها من العرض.</p></div><div class="actions product-toolbar-actions" style="margin:0"><button class="btn secondary" id="refreshStockBtn" type="button">تحديث المخزون</button></div></div>
+  <label class="field">بحث بالاسم أو الكود أو الباركود<input id="stockSearch" type="search" placeholder="امسح باركودًا أو اكتب اسم الصنف / الكود" autocomplete="off"/></label>
+  <div class="tablewrap"><table><thead><tr><th>الكود</th><th>الصنف</th><th>الوحدة</th><th>الباركود الأساسي</th><th>الرصيد الحالي</th><th>الحالة</th></tr></thead><tbody id="stockBalances"><tr><td colspan="6" class="muted">جارٍ تحميل أرصدة المخزون...</td></tr></tbody></table></div>
+  <div id="stockListStatus" class="status muted" role="status" aria-live="polite"></div>
+ </section>
+ <section class="panel">
+  <h2>تسجيل حركة مخزون</h2><p class="muted">استخدم «وارد» لإضافة كمية إلى الرصيد، و«منصرف» لصرف كمية موجودة. يمنع مدار صرف كمية أكبر من الرصيد المتاح، ولا يسمح بتسجيل حركة لصنف موقوف. تُحفظ وحدة القياس مع كل حركة؛ ولا يمكن تغيير وحدة صنف له رصيد حالي حتى لا تتغير دلالة الكميات.</p>
+  <form id="stockMovementForm">
+   <div class="grid">
+    <label class="field">نوع الحركة<select id="stockMovementDirection" required><option value="in">وارد — إضافة للمخزون</option><option value="out">منصرف — صرف من المخزون</option></select></label>
+    <label class="field">باركود أو كود الصنف<input id="stockScanner" placeholder="امسح الباركود ثم اضغط Enter" autocomplete="off"/></label>
+    <label class="field">الصنف<select id="stockMovementProduct" required><option value="">جارٍ تحميل الأصناف...</option></select></label>
+    <label class="field">الكمية<input id="stockMovementQuantity" type="number" min="0.001" step="0.001" required placeholder="مثال: 12 أو 1.250"/></label>
+    <label class="field">ملاحظات (اختياري)<input id="stockMovementNotes" maxlength="500" placeholder="مثال: رصيد افتتاحي أو توريد فاتورة رقم..."/></label>
+   </div>
+   <p id="stockAvailableBalance" class="muted">اختر صنفًا لعرض رصيده الحالي.</p>
+   <div class="actions"><button class="btn" id="saveStockMovement" type="submit">تسجيل الحركة</button><button class="btn secondary" id="clearStockMovement" type="button">مسح الحقول</button></div>
+   <div id="stockMovementStatus" class="status muted" role="status" aria-live="polite"></div>
+  </form>
+ </section>
+ <section class="panel"><h2>سجل حركات المخزون</h2><p class="muted">آخر 100 حركة مسجلة. الإشارة الموجبة تعني واردًا، والسالبة تعني منصرفًا.</p><div class="tablewrap"><table><thead><tr><th>التاريخ</th><th>الكود</th><th>الصنف</th><th>الحركة</th><th>الكمية</th><th>الوحدة</th><th>ملاحظات</th></tr></thead><tbody id="stockMovements"><tr><td colspan="7" class="muted">جارٍ تحميل سجل الحركات...</td></tr></tbody></table></div></section>
 </section>
 <section class="page" data-page-content="backup" hidden><div class="page-title"><h2>النسخ الاحتياطي والاستعادة</h2><p>إدارة نسخ قاعدة البيانات ونقاط الاستعادة بأمان.</p></div><section class="panel"><h2>النسخ الاحتياطي واستعادة البيانات</h2><p class="muted">أنشئ نسخة احتياطية في المكان الذي تختاره. وعند الاستعادة، يحفظ مدار نسخة تلقائية من الوضع الحالي قبل التغيير، وتظهر هذه النسخ في قائمة نقاط الاستعادة بالأسفل حتى تتمكن من الرجوع إليها بضغطة واحدة.</p><div class="actions"><button class="btn" id="backupBtn" type="button">إنشاء نسخة احتياطية إلى ملف</button><button class="btn secondary" id="restoreBtn" type="button">استعادة من ملف خارجي</button><button class="btn secondary" id="refreshRestorePoints" type="button">تحديث نقاط الاستعادة</button></div><div class="status muted" id="backupStatus" role="status" aria-live="polite"></div><h3>نقاط الاستعادة المحفوظة داخل مدار</h3><p class="muted">هذه نسخ الأمان التلقائية التي أنشأها مدار قبل عمليات الاستعادة السابقة، مرتبة من الأحدث إلى الأقدم.</p><div id="restorePoints" class="restore-list"><div class="restore-empty muted">جارٍ تحميل نقاط الاستعادة...</div></div></section></section>
 <section class="page" data-page-content="help" hidden><div class="page-title"><h2>المساعدة</h2><p>معلومات أساسية عن مدار وقواعد استخدام الباركود.</p></div><section class="panel"><h2>أهلًا بك في مدار</h2><p class="muted">تطبيق مكتبي محلي بقاعدة SQLite. كل صنف جديد يحصل على باركود أساسي تلقائيًا إذا لم تدخل باركودًا موجودًا.</p><span class="pill">الباركود فريد ولا يتكرر</span> <span class="pill">دعم قارئ الباركود USB كإدخال لوحة مفاتيح</span></section><section class="panel"><h2>قواعد الباركود</h2><ul class="muted"><li>نحافظ على الباركود القديم إذا كان موجودًا وفريدًا.</li><li>لو مش موجود، يُنشأ باركود داخلي بصيغة MAD متوافق مع الطباعة عبر Code 128.</li><li>يمكن لاحقًا إضافة باركودات متعددة للصنف حسب العبوة أو الوحدة.</li><li>الباركود الداخلي لا يُعد رقم GTIN عالميًا ولا يُستخدم كبديل لباركود تجاري مسجل.</li></ul></section></section></main></div><footer>مدار © 2026 — نسخة تطوير أولية، يلزم بناؤها واختبارها قبل الاستخدام الفعلي.</footer>
@@ -76,7 +101,7 @@ header{position:sticky;top:0;z-index:100;background:#14243b;color:white;padding:
 </div>
 <script>
 // Navigation: show one section at a time without reloading the app.
-function showPage(page){document.querySelectorAll('[data-page-content]').forEach(el=>{el.hidden=el.dataset.pageContent!==page;});document.querySelectorAll('.nav-btn').forEach(el=>{const active=el.dataset.page===page;el.classList.toggle('active',active);if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});if(page==='products')setTimeout(()=>document.getElementById('productSearch')?.focus(),0);}
+function showPage(page){document.querySelectorAll('[data-page-content]').forEach(el=>{el.hidden=el.dataset.pageContent!==page;});document.querySelectorAll('.nav-btn').forEach(el=>{const active=el.dataset.page===page;el.classList.toggle('active',active);if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});if(page==='products')setTimeout(()=>document.getElementById('productSearch')?.focus(),0);if(page==='stock')refreshStock(undefined,true);}
 document.querySelectorAll('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>showPage(btn.dataset.page)));
 document.querySelectorAll('[data-go-page]').forEach(btn=>btn.addEventListener('click',()=>showPage(btn.dataset.goPage)));
 // Theme preference is saved locally on this device.
@@ -233,6 +258,104 @@ document.getElementById('editProductForm').addEventListener('submit',async e=>{e
 document.getElementById('productSearch').addEventListener('input',e=>refreshProducts(e.target.value));
 
 document.getElementById('refresh').addEventListener('click',()=>refreshProducts());
+// Stock balances are an immutable movement ledger; balances are never edited directly.
+let stockRowsCache=[]; // full stock-balance cache used by the dashboard and movement form
+let stockProductChoices=[];
+const quantityText=n=>Math.abs(Number(n||0)/1000).toLocaleString('ar-EG',{maximumFractionDigits:3});
+const quantityBalanceText=n=>(Number(n||0)/1000).toLocaleString('ar-EG',{maximumFractionDigits:3});
+function renderStockBalances(rows){
+ const body=document.getElementById('stockBalances');
+ body.innerHTML=rows.map(p=>`<tr><td>${escapeHtml(p.code)}</td><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.unit)}</td><td><code>${escapeHtml(p.barcode)}</code></td><td>${quantityBalanceText(p.quantity_milli)}</td><td>${p.is_active?'نشط':'موقوف'}</td></tr>`).join('')||'<tr><td colspan="6" class="muted">لا توجد أصناف تطابق البحث.</td></tr>';
+ const activeWithStock=stockRowsCache.filter(p=>p.is_active&&Number(p.quantity_milli)>0).length;
+ const stat=document.getElementById('dashboardInStockProducts');
+ if(stat)stat.textContent=activeWithStock.toLocaleString('ar-EG');
+}
+async function loadStockMovementProducts(){
+ if(!invoke)return;
+ stockProductChoices=await invoke('list_products');
+ const select=document.getElementById('stockMovementProduct');
+ const previous=select.value;
+ select.innerHTML='<option value="">اختر الصنف</option>'+stockProductChoices.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} — ${escapeHtml(p.code)} — ${escapeHtml(p.barcode)}</option>`).join('');
+ if(previous&&stockProductChoices.some(p=>String(p.id)===previous))select.value=previous;
+ updateStockAvailableBalance();
+}
+async function loadStockMovementHistory(){
+ if(!invoke)return;
+ const rows=await invoke('list_stock_movements');
+ document.getElementById('stockMovements').innerHTML=rows.map(m=>{
+  const inbound=Number(m.quantity_milli)>0;
+  return `<tr><td>${escapeHtml(m.created_at)}</td><td>${escapeHtml(m.product_code)}</td><td>${escapeHtml(m.product_name)}</td><td>${inbound?'وارد':'منصرف'}</td><td>${inbound?'+':'−'}${quantityText(m.quantity_milli)}</td><td>${escapeHtml(m.unit)}</td><td>${escapeHtml(m.notes)}</td></tr>`;
+ }).join('')||'<tr><td colspan="7" class="muted">لم تُسجّل حركات مخزون بعد.</td></tr>';
+}
+async function refreshStock(query,includeSecondary=false){
+ const listStatus=document.getElementById('stockListStatus');
+ if(!invoke){listStatus.textContent='عرض المخزون متاح عند تشغيل تطبيق مدار داخل Tauri.';return;}
+ try{
+  const term=query??document.getElementById('stockSearch').value;
+  const displayedRows=await invoke('list_stock',{query:term});
+  if(includeSecondary||stockRowsCache.length===0){
+   stockRowsCache=term?await invoke('list_stock',{query:''}):displayedRows;
+   await Promise.all([loadStockMovementProducts(),loadStockMovementHistory()]);
+  }else if(!term){
+   stockRowsCache=displayedRows;
+  }
+  renderStockBalances(displayedRows);
+  listStatus.textContent=`عدد الأصناف المعروضة: ${displayedRows.length.toLocaleString('ar-EG')}`;
+ }catch(err){listStatus.textContent='تعذر تحميل المخزون: '+err;}
+}
+function updateStockAvailableBalance(){
+ const id=Number(document.getElementById('stockMovementProduct').value);
+ const p=stockRowsCache.find(row=>Number(row.product_id)===id);
+ document.getElementById('stockAvailableBalance').textContent=p
+  ?`الرصيد الحالي للصنف «${p.name}»: ${quantityBalanceText(p.quantity_milli)} ${p.unit}${p.is_active?'':' — الصنف موقوف ولا يمكن تسجيل حركة له.'}`
+  :'اختر صنفًا لعرض رصيده الحالي.';
+}
+async function resolveStockScanner(){
+ const input=document.getElementById('stockScanner');
+ const value=input.value.trim();
+ if(!value)return;
+ const status=document.getElementById('stockMovementStatus');
+ if(!invoke){status.textContent='قراءة الباركود متاحة عند تشغيل التطبيق داخل Tauri.';return;}
+ try{
+  let p=await invoke('find_product_by_barcode',{barcode:value});
+  if(!p){const rows=await invoke('search_products',{query:value});p=rows.find(row=>row.code===value)||(rows.length===1?rows[0]:null);}
+  if(!p){status.textContent='لم يتم العثور على صنف مطابق للباركود أو الكود. تأكد أن الصنف نشط.';return;}
+  const select=document.getElementById('stockMovementProduct');
+  if(!stockProductChoices.some(row=>Number(row.id)===Number(p.id)))await loadStockMovementProducts();
+  select.value=String(p.id);updateStockAvailableBalance();
+  status.textContent=`تم تحديد الصنف: ${p.name} (${p.code}).`;
+  document.getElementById('stockMovementQuantity').focus();
+ }catch(err){status.textContent='تعذر قراءة الصنف: '+err;}
+}
+document.getElementById('stockScanner').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();resolveStockScanner();}});
+document.getElementById('stockMovementProduct').addEventListener('change',updateStockAvailableBalance);
+let stockSearchTimer;
+document.getElementById('stockSearch').addEventListener('input',event=>{clearTimeout(stockSearchTimer);const value=event.target.value;stockSearchTimer=setTimeout(()=>refreshStock(value,false),120);});
+document.getElementById('refreshStockBtn').addEventListener('click',()=>refreshStock(undefined,true));
+document.getElementById('clearStockMovement').addEventListener('click',()=>{
+ document.getElementById('stockScanner').value='';document.getElementById('stockMovementQuantity').value='';document.getElementById('stockMovementNotes').value='';
+ document.getElementById('stockMovementDirection').value='in';document.getElementById('stockMovementProduct').value='';
+ document.getElementById('stockMovementStatus').textContent='';updateStockAvailableBalance();document.getElementById('stockScanner').focus();
+});
+document.getElementById('stockMovementForm').addEventListener('submit',async event=>{
+ event.preventDefault();
+ const status=document.getElementById('stockMovementStatus');const button=document.getElementById('saveStockMovement');
+ if(!invoke){status.textContent='تسجيل حركات المخزون متاح عند تشغيل تطبيق مدار داخل Tauri.';return;}
+ const productId=Number(document.getElementById('stockMovementProduct').value);
+ const quantity=Number(document.getElementById('stockMovementQuantity').value);
+ const direction=document.getElementById('stockMovementDirection').value;
+ if(!productId){status.textContent='اختر الصنف أولًا، ويمكنك مسح باركوده في الحقل المخصص.';return;}
+ if(!Number.isFinite(quantity)||quantity<=0){status.textContent='أدخل كمية أكبر من صفر.';return;}
+ button.disabled=true;status.textContent='جارٍ تسجيل حركة المخزون...';
+ try{
+  const result=await invoke('record_stock_movement',{productId,direction,quantityMilli:Math.round(quantity*1000),notes:document.getElementById('stockMovementNotes').value.trim()||null});
+  status.textContent=result;
+  document.getElementById('stockMovementQuantity').value='';document.getElementById('stockMovementNotes').value='';document.getElementById('stockScanner').value='';
+  await refreshStock(undefined,true);updateStockAvailableBalance();
+ }catch(err){status.textContent='تعذر تسجيل حركة المخزون: '+err;}
+ finally{button.disabled=false;}
+});
+
 const backupStatus=document.getElementById('backupStatus');
 const restorePointsEl=document.getElementById('restorePoints');
 const dialog=window.__TAURI__?.dialog;
@@ -284,5 +407,6 @@ document.getElementById('restoreBtn').addEventListener('click',async()=>{
  try{const selected=await dialog.open({title:'اختيار نسخة مدار للاستعادة',multiple:false,directory:false,filters:[{name:'قاعدة بيانات SQLite',extensions:['db','sqlite']}]});if(!selected){backupStatus.textContent='تم إلغاء الاستعادة.';return;}if(!(await confirmRestore('تحذير: ستُستبدل البيانات الحالية بمحتويات النسخة المختارة. بعد الضغط على موافق فقط، سيحتفظ مدار بنسخة أمان من قاعدة البيانات الحالية ثم يبدأ الاستعادة. هل تريد المتابعة؟'))){backupStatus.textContent='تم إلغاء الاستعادة. لم يتم إنشاء نسخة أمان.';return;}backupStatus.textContent='جارٍ التحقق من النسخة واستعادة البيانات...';const result=await invoke('restore_backup',{backupPath:selected});backupStatus.textContent=result+'\nسيُعاد تحميل قائمة الأصناف الآن.';await refreshProducts();await refreshRestorePoints();}catch(err){backupStatus.textContent='فشلت الاستعادة: '+err;}
 });
 refreshProducts();
+refreshStock(undefined,true);
 refreshRestorePoints();
 </script></body></html>

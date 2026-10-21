@@ -50,10 +50,48 @@ fn initialize_database(path: &PathBuf) -> Result<(), String> {
             id INTEGER PRIMARY KEY, action TEXT NOT NULL, entity_type TEXT NOT NULL,
             entity_id TEXT, details TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
+        CREATE TABLE IF NOT EXISTS warehouses (
+            id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS stock_movements (
+            id INTEGER PRIMARY KEY,
+            product_id INTEGER NOT NULL REFERENCES products(id),
+            warehouse_id INTEGER NOT NULL REFERENCES warehouses(id),
+            movement_type TEXT NOT NULL CHECK (movement_type IN ('opening','purchase','sale','purchase_return','sale_return','adjustment','transfer_in','transfer_out')),
+            quantity_milli INTEGER NOT NULL CHECK (quantity_milli <> 0),
+            reference_type TEXT,
+            reference_id INTEGER,
+            notes TEXT,
+            unit TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_stock_movements_product_warehouse ON stock_movements(product_id, warehouse_id, created_at);
+        INSERT OR IGNORE INTO warehouses(code,name) VALUES ('MAIN','المخزن الرئيسي');
         INSERT OR IGNORE INTO app_settings(key,value) VALUES ('app_name','مدار');
-        INSERT OR IGNORE INTO app_settings(key,value) VALUES ('database_schema_version','2');
+        INSERT OR IGNORE INTO app_settings(key,value) VALUES ('database_schema_version','3');
+        UPDATE app_settings SET value='3', updated_at=datetime('now') WHERE key='database_schema_version' AND value='2';
         INSERT OR IGNORE INTO app_settings(key,value) VALUES ('barcode_prefix','MAD');
         INSERT OR IGNORE INTO app_settings(key,value) VALUES ('barcode_auto_generate','true');"
+    ).map_err(|e| e.to_string())?;
+
+    // Additive migration for installations that created stock_movements from the early schema.
+    let has_movement_unit = {
+        let mut stmt = conn.prepare("PRAGMA table_info(stock_movements)").map_err(|e| e.to_string())?;
+        let columns = stmt.query_map([], |row| row.get::<_, String>(1)).map_err(|e| e.to_string())?;
+        let mut found = false;
+        for column in columns {
+            if column.map_err(|e| e.to_string())? == "unit" { found = true; break; }
+        }
+        found
+    };
+    if !has_movement_unit {
+        conn.execute("ALTER TABLE stock_movements ADD COLUMN unit TEXT", []).map_err(|e| e.to_string())?;
+    }
+    conn.execute(
+        "UPDATE stock_movements SET unit=(SELECT p.unit FROM products p WHERE p.id=stock_movements.product_id) WHERE unit IS NULL OR trim(unit)=''",
+        [],
     ).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -198,8 +236,14 @@ fn update_product(app: tauri::AppHandle, id: i64, code: String, name: String, un
     let unit = unit.trim();
     if code.is_empty() || name.is_empty() || unit.is_empty() { return Err("الكود والاسم والوحدة حقول مطلوبة".into()); }
     if purchase_price_minor < 0 || sale_price_minor < 0 { return Err("السعر لا يمكن أن يكون سالبًا".into()); }
-    let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM products WHERE id=?1 AND is_active=1)", [id], |r| r.get(0)).map_err(|e| e.to_string())?;
-    if !exists { return Err("الصنف غير موجود أو موقوف".into()); }
+    let current_unit: Option<String> = tx.query_row("SELECT unit FROM products WHERE id=?1 AND is_active=1", [id], |r| r.get(0)).optional().map_err(|e| e.to_string())?;
+    let Some(current_unit) = current_unit else { return Err("الصنف غير موجود أو موقوف".into()); };
+    if current_unit != unit {
+        let on_hand: i64 = tx.query_row("SELECT COALESCE(SUM(quantity_milli),0) FROM stock_movements WHERE product_id=?1", [id], |r| r.get(0)).map_err(|e| e.to_string())?;
+        if on_hand != 0 {
+            return Err(format!("لا يمكن تغيير وحدة الصنف إلى «{unit}» لأن له رصيدًا حاليًا. صفّر الرصيد أو عالج تحويل الوحدة أولًا حتى لا تتغير دلالة الكميات المسجلة."));
+        }
+    }
     tx.execute("UPDATE products SET code=?1,name=?2,unit=?3,purchase_price_minor=?4,sale_price_minor=?5,updated_at=datetime('now') WHERE id=?6", params![code,name,unit,purchase_price_minor,sale_price_minor,id]).map_err(|e| format!("تعذر تعديل الصنف (تأكد أن الكود غير مستخدم): {e}"))?;
     tx.execute("UPDATE product_barcodes SET unit=?1 WHERE product_id=?2 AND is_primary=1", params![unit,id]).map_err(|e| e.to_string())?;
     tx.execute("INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES ('update','product',?1,?2)", params![id.to_string(), format!("code={code}; name={name}; unit={unit}; barcode_preserved=true")]).map_err(|e| e.to_string())?;
@@ -238,6 +282,158 @@ fn deactivate_product(app: tauri::AppHandle, id: i64) -> Result<String, String> 
     tx.execute("INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES ('deactivate','product',?1,'soft delete; data and barcodes retained')", [id.to_string()]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok("تم إيقاف الصنف مع الاحتفاظ ببياناته وباركوداته".into())
+}
+
+#[derive(Serialize)]
+struct StockRow {
+    product_id: i64,
+    code: String,
+    name: String,
+    unit: String,
+    barcode: String,
+    quantity_milli: i64,
+    is_active: bool,
+}
+
+#[derive(Serialize)]
+struct StockMovementRow {
+    id: i64,
+    product_code: String,
+    product_name: String,
+    unit: String,
+    quantity_milli: i64,
+    notes: String,
+    created_at: String,
+}
+
+#[tauri::command]
+fn list_stock(app: tauri::AppHandle, query: String) -> Result<Vec<StockRow>, String> {
+    let path = database_path(&app)?;
+    initialize_database(&path)?;
+    let conn = connect(&path)?;
+    let q = query.trim();
+    let like = format!("%{}%", q);
+    let mut stmt = conn.prepare(
+        "SELECT p.id,p.code,p.name,p.unit,
+                COALESCE((SELECT b.barcode FROM product_barcodes b WHERE b.product_id=p.id AND b.is_primary=1 LIMIT 1),''),
+                COALESCE(SUM(sm.quantity_milli),0),p.is_active
+         FROM products p
+         LEFT JOIN stock_movements sm ON sm.product_id=p.id
+         WHERE (?1='' OR p.name LIKE ?2 OR p.code LIKE ?2 OR EXISTS(
+             SELECT 1 FROM product_barcodes bx WHERE bx.product_id=p.id AND bx.barcode LIKE ?2
+         ))
+         GROUP BY p.id,p.code,p.name,p.unit,p.is_active
+         ORDER BY p.is_active DESC,p.name COLLATE NOCASE LIMIT 1000"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(params![q, like], |r| Ok(StockRow {
+        product_id: r.get(0)?,
+        code: r.get(1)?,
+        name: r.get(2)?,
+        unit: r.get(3)?,
+        barcode: r.get(4)?,
+        quantity_milli: r.get(5)?,
+        is_active: r.get::<_, i64>(6)? != 0,
+    })).map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_stock_movements(app: tauri::AppHandle) -> Result<Vec<StockMovementRow>, String> {
+    let path = database_path(&app)?;
+    initialize_database(&path)?;
+    let conn = connect(&path)?;
+    let mut stmt = conn.prepare(
+        "SELECT sm.id,p.code,p.name,COALESCE(sm.unit,p.unit,''),sm.quantity_milli,COALESCE(sm.notes,''),sm.created_at
+         FROM stock_movements sm JOIN products p ON p.id=sm.product_id
+         ORDER BY sm.id DESC LIMIT 100"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |r| Ok(StockMovementRow {
+        id: r.get(0)?,
+        product_code: r.get(1)?,
+        product_name: r.get(2)?,
+        unit: r.get(3)?,
+        quantity_milli: r.get(4)?,
+        notes: r.get(5)?,
+        created_at: r.get(6)?,
+    })).map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn record_stock_movement(
+    app: tauri::AppHandle,
+    product_id: i64,
+    direction: String,
+    quantity_milli: i64,
+    notes: Option<String>,
+) -> Result<String, String> {
+    if quantity_milli <= 0 {
+        return Err("الكمية لازم تكون أكبر من صفر".into());
+    }
+    let signed_quantity = match direction.as_str() {
+        "in" => quantity_milli,
+        "out" => -quantity_milli,
+        _ => return Err("نوع الحركة غير صالح؛ اختر وارد أو منصرف".into()),
+    };
+
+    let path = database_path(&app)?;
+    initialize_database(&path)?;
+    let mut conn = connect(&path)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    let product: Option<(String, String, String)> = tx.query_row(
+        "SELECT code,name,unit FROM products WHERE id=?1 AND is_active=1",
+        [product_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).optional().map_err(|e| e.to_string())?;
+    let Some((product_code, product_name, unit)) = product else {
+        return Err("الصنف غير موجود أو موقوف؛ أعد تفعيله قبل تسجيل حركة جديدة".into());
+    };
+
+    let warehouse_id: i64 = tx.query_row(
+        "SELECT id FROM warehouses WHERE code='MAIN' AND is_active=1 LIMIT 1",
+        [], |r| r.get(0),
+    ).map_err(|e| e.to_string())?;
+    let current_balance: i64 = tx.query_row(
+        "SELECT COALESCE(SUM(quantity_milli),0) FROM stock_movements WHERE product_id=?1 AND warehouse_id=?2",
+        params![product_id, warehouse_id], |r| r.get(0),
+    ).map_err(|e| e.to_string())?;
+
+    if direction == "out" && quantity_milli > current_balance {
+        return Err(format!(
+            "الرصيد المتاح للصنف «{}» هو {} {} فقط؛ لا يمكن صرف {} {}.",
+            product_name,
+            current_balance as f64 / 1000.0,
+            unit,
+            quantity_milli as f64 / 1000.0,
+            unit,
+        ));
+    }
+
+    let note = notes.unwrap_or_default().trim().to_string();
+    let reference_type = if direction == "in" { "manual_in" } else { "manual_out" };
+    tx.execute(
+        "INSERT INTO stock_movements(product_id,warehouse_id,movement_type,quantity_milli,reference_type,notes,unit)
+         VALUES (?1,?2,'adjustment',?3,?4,?5,?6)",
+        params![product_id, warehouse_id, signed_quantity, reference_type, if note.is_empty() { None } else { Some(note.as_str()) }, unit],
+    ).map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO audit_log(action,entity_type,entity_id,details) VALUES (?1,'product',?2,?3)",
+        params![
+            if direction == "in" { "stock_in" } else { "stock_out" },
+            product_id.to_string(),
+            format!("code={product_code}; quantity_milli={quantity_milli}; unit={unit}; note={note}"),
+        ],
+    ).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+
+    Ok(format!(
+        "تم تسجيل {} للصنف «{}» بكمية {} {}.",
+        if direction == "in" { "الوارد" } else { "المنصرف" },
+        product_name,
+        quantity_milli as f64 / 1000.0,
+        unit,
+    ))
 }
 
 #[tauri::command]
@@ -406,7 +602,7 @@ pub fn run() {
             initialize_database(&path).map_err(std::io::Error::other)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![app_info, create_product, find_product_by_barcode, list_products, search_products, list_inactive_products, search_inactive_products, reactivate_product, update_product, add_alternate_barcode, deactivate_product, create_backup, list_restore_points, delete_restore_point, restore_backup])
+        .invoke_handler(tauri::generate_handler![app_info, create_product, find_product_by_barcode, list_products, search_products, list_inactive_products, search_inactive_products, reactivate_product, update_product, add_alternate_barcode, deactivate_product, list_stock, list_stock_movements, record_stock_movement, create_backup, list_restore_points, delete_restore_point, restore_backup])
         .run(tauri::generate_context!())
         .expect("خطأ أثناء تشغيل مدار");
 }
