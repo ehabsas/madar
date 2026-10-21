@@ -339,7 +339,7 @@ fn seed_access_control(conn: &Connection) -> Result<(), String> {
         ("products.edit", "تعديل بيانات الصنف", "تعديل الكود والاسم والوحدة والبيانات العامة"),
         ("products.deactivate", "إيقاف صنف", "إيقاف الصنف دون حذفه نهائيًا"),
         ("products.reactivate", "إعادة تفعيل صنف", "إرجاع الصنف الموقوف إلى الأصناف النشطة"),
-        ("products.barcode.manage", "إدارة الباركودات", "إضافة باركودات بديلة للصنف"),
+        ("products.barcode.manage", "إدارة الباركودات", "إضافة باركودات بديلة وتغيير الباركود الأساسي للصنف"),
         ("products.purchase_price.edit", "تعديل سعر الشراء", "تغيير سعر الشراء عند إنشاء أو تعديل صنف"),
         ("products.sale_price.edit", "تعديل سعر البيع", "تغيير سعر البيع عند إنشاء أو تعديل صنف"),
         // Stock permissions.
@@ -392,6 +392,10 @@ fn seed_access_control(conn: &Connection) -> Result<(), String> {
     for (code, name, description) in permissions {
         conn.execute("INSERT OR IGNORE INTO permissions(code,name,description) VALUES (?1,?2,?3)", params![code,name,description]).map_err(|e| e.to_string())?;
     }
+    conn.execute(
+        "UPDATE permissions SET description=?1 WHERE code='products.barcode.manage'",
+        ["إضافة باركودات بديلة وتغيير الباركود الأساسي للصنف"],
+    ).map_err(|e| e.to_string())?;
     for (code, name) in [("admin","مدير النظام"),("manager","مدير"),("warehouse","مسؤول مخزن"),("sales","مبيعات"),("viewer","عرض فقط")] {
         conn.execute("INSERT OR IGNORE INTO roles(code,name,is_system) VALUES (?1,?2,1)", params![code,name]).map_err(|e| e.to_string())?;
     }
@@ -991,7 +995,7 @@ fn reactivate_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64
 }
 
 #[tauri::command]
-fn update_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, code: String, name: String, unit: String, purchase_price_minor: i64, sale_price_minor: i64) -> Result<ProductRow, String> {
+fn update_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, code: String, name: String, unit: String, barcode: String, purchase_price_minor: i64, sale_price_minor: i64) -> Result<ProductRow, String> {
     let actor = require_permission(state.inner(), "products.edit")?;
     let path = database_path(&app)?;
     initialize_database(&path)?;
@@ -1000,7 +1004,9 @@ fn update_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, co
     let code = code.trim();
     let name = name.trim();
     let unit = unit.trim();
+    let barcode = barcode.trim();
     if code.is_empty() || name.is_empty() || unit.is_empty() { return Err("الكود والاسم والوحدة حقول مطلوبة".into()); }
+    if barcode.is_empty() { return Err("الباركود الأساسي لا يمكن أن يكون فارغًا".into()); }
     if purchase_price_minor < 0 || sale_price_minor < 0 { return Err("السعر لا يمكن أن يكون سالبًا".into()); }
     let current: Option<(String,i64,i64)> = tx.query_row("SELECT unit,purchase_price_minor,sale_price_minor FROM products WHERE id=?1 AND is_active=1", [id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e| e.to_string())?;
     let Some((current_unit,current_purchase_price,current_sale_price)) = current else { return Err("الصنف غير موجود أو موقوف".into()); };
@@ -1019,9 +1025,41 @@ fn update_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, co
             return Err(format!("لا يمكن تغيير وحدة الصنف إلى «{unit}» لأن له رصيدًا حاليًا. صفّر الرصيد أو عالج تحويل الوحدة أولًا حتى لا تتغير دلالة الكميات المسجلة."));
         }
     }
+    // Change the primary barcode only when the user explicitly edits that field.
+    // The previous primary is retained as an alternate, so historical barcode data is never lost.
+    let current_primary: Option<(i64, String)> = tx.query_row(
+        "SELECT id,barcode FROM product_barcodes WHERE product_id=?1 AND is_primary=1 LIMIT 1",
+        [id], |r| Ok((r.get(0)?, r.get(1)?))
+    ).optional().map_err(|e| e.to_string())?;
+    let previous_barcode = current_primary.as_ref().map(|(_, value)| value.as_str().to_owned()).unwrap_or_default();
+    let barcode_changed = previous_barcode != barcode;
+    if barcode_changed {
+        if !actor.permissions.iter().any(|p| p == "products.barcode.manage") {
+            return Err("لا تملك صلاحية تغيير الباركود الأساسي".into());
+        }
+        let existing: Option<(i64, i64)> = tx.query_row(
+            "SELECT id,product_id FROM product_barcodes WHERE barcode=?1 LIMIT 1",
+            [barcode], |r| Ok((r.get(0)?, r.get(1)?))
+        ).optional().map_err(|e| e.to_string())?;
+        if let Some((_, owner_id)) = existing {
+            if owner_id != id {
+                return Err("الباركود مستخدم بالفعل لصنف آخر. أدخل باركود مختلفًا.".into());
+            }
+        }
+        // Demote the current primary first to satisfy the unique partial index.
+        tx.execute("UPDATE product_barcodes SET is_primary=0 WHERE product_id=?1 AND is_primary=1", [id]).map_err(|e| e.to_string())?;
+        if let Some((barcode_row_id, _)) = existing {
+            // The requested barcode already exists as this product's alternate: promote it.
+            tx.execute("UPDATE product_barcodes SET is_primary=1,unit=?1 WHERE id=?2 AND product_id=?3", params![unit, barcode_row_id, id]).map_err(|e| e.to_string())?;
+        } else {
+            // Insert the new primary; the former primary remains stored as an alternate.
+            tx.execute("INSERT INTO product_barcodes(product_id,unit,barcode,barcode_type,is_primary) VALUES (?1,?2,?3,'alternate',1)", params![id,unit,barcode]).map_err(|e| format!("تعذر حفظ الباركود الأساسي: {e}"))?;
+        }
+    }
     tx.execute("UPDATE products SET code=?1,name=?2,unit=?3,purchase_price_minor=?4,sale_price_minor=?5,updated_at=datetime('now') WHERE id=?6", params![code,name,unit,purchase_price_minor,sale_price_minor,id]).map_err(|e| format!("تعذر تعديل الصنف (تأكد أن الكود غير مستخدم): {e}"))?;
     tx.execute("UPDATE product_barcodes SET unit=?1 WHERE product_id=?2 AND is_primary=1", params![unit,id]).map_err(|e| e.to_string())?;
-    write_audit(&tx, Some(&actor), "update", "product", Some(&id.to_string()), &format!("code={code}; name={name}; unit={unit}; barcode_preserved=true"))?;
+    let audit_barcode_detail = if barcode_changed { format!("primary_barcode_changed_from={previous_barcode}; primary_barcode={barcode}; old_barcode_preserved_as_alternate=true") } else { format!("primary_barcode={barcode}; primary_barcode_changed=false") };
+    write_audit(&tx, Some(&actor), "update", "product", Some(&id.to_string()), &format!("code={code}; name={name}; unit={unit}; {audit_barcode_detail}"))?;
     let row = tx.query_row("SELECT p.id,p.code,p.name,p.unit,COALESCE((SELECT barcode FROM product_barcodes WHERE product_id=p.id AND is_primary=1 LIMIT 1),''),p.purchase_price_minor,p.sale_price_minor FROM products p WHERE p.id=?1", [id], |r| Ok(ProductRow { id:r.get(0)?,code:r.get(1)?,name:r.get(2)?,unit:r.get(3)?,barcode:r.get(4)?,purchase_price_minor:r.get(5)?,sale_price_minor:r.get(6)? })).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(row)
