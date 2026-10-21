@@ -1000,39 +1000,63 @@ fn update_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, co
     let path = database_path(&app)?;
     initialize_database(&path)?;
     let mut conn = connect(&path)?;
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| format!("تعذر بدء تعديل الصنف: {e}"))?;
+
     let code = code.trim();
     let name = name.trim();
     let unit = unit.trim();
     let barcode = barcode.trim();
-    if code.is_empty() || name.is_empty() || unit.is_empty() { return Err("الكود والاسم والوحدة حقول مطلوبة".into()); }
-    if barcode.is_empty() { return Err("الباركود الأساسي لا يمكن أن يكون فارغًا".into()); }
-    if purchase_price_minor < 0 || sale_price_minor < 0 { return Err("السعر لا يمكن أن يكون سالبًا".into()); }
-    let current: Option<(String,i64,i64)> = tx.query_row("SELECT unit,purchase_price_minor,sale_price_minor FROM products WHERE id=?1 AND is_active=1", [id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e| e.to_string())?;
-    let Some((current_unit,current_purchase_price,current_sale_price)) = current else { return Err("الصنف غير موجود أو موقوف".into()); };
-    if purchase_price_minor != current_purchase_price && !actor.permissions.iter().any(|p| p == "products.purchase_price.edit") { return Err("ليس لديك صلاحية تعديل سعر الشراء".into()); }
-    if sale_price_minor != current_sale_price && !actor.permissions.iter().any(|p| p == "products.sale_price.edit") { return Err("ليس لديك صلاحية تعديل سعر البيع".into()); }
+    if code.is_empty() || name.is_empty() || unit.is_empty() {
+        return Err("الكود والاسم والوحدة حقول مطلوبة".into());
+    }
+    if barcode.is_empty() {
+        return Err("الباركود الأساسي لا يمكن أن يكون فارغًا".into());
+    }
+    if purchase_price_minor < 0 || sale_price_minor < 0 {
+        return Err("السعر لا يمكن أن يكون سالبًا".into());
+    }
+
+    let current: Option<(String, i64, i64)> = tx.query_row(
+        "SELECT unit,purchase_price_minor,sale_price_minor FROM products WHERE id=?1 AND is_active=1",
+        [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+    ).optional().map_err(|e| format!("تعذر قراءة بيانات الصنف: {e}"))?;
+    let Some((current_unit, current_purchase_price, current_sale_price)) = current else {
+        return Err("الصنف غير موجود أو موقوف".into());
+    };
+    if purchase_price_minor != current_purchase_price && !actor.permissions.iter().any(|p| p == "products.purchase_price.edit") {
+        return Err("ليس لديك صلاحية تعديل سعر الشراء".into());
+    }
+    if sale_price_minor != current_sale_price && !actor.permissions.iter().any(|p| p == "products.sale_price.edit") {
+        return Err("ليس لديك صلاحية تعديل سعر البيع".into());
+    }
     if current_unit != unit {
         let draft_refs: i64 = tx.query_row(
             "SELECT (SELECT COUNT(*) FROM purchase_invoice_items li JOIN purchase_invoices h ON h.id=li.purchase_invoice_id WHERE li.product_id=?1 AND h.status='draft') + (SELECT COUNT(*) FROM sale_items li JOIN sales h ON h.id=li.sale_id WHERE li.product_id=?1 AND h.status='draft')",
             [id], |r| r.get(0)
-        ).map_err(|e| e.to_string())?;
+        ).map_err(|e| format!("تعذر التحقق من فواتير الصنف: {e}"))?;
         if draft_refs > 0 {
             return Err("لا يمكن تغيير وحدة الصنف مع وجود فواتير مسودة تستخدمه؛ عدّل أو ألغِ المسودات أولًا.".into());
         }
-        let on_hand: i64 = tx.query_row("SELECT COALESCE(SUM(quantity_milli),0) FROM stock_movements WHERE product_id=?1", [id], |r| r.get(0)).map_err(|e| e.to_string())?;
+        let on_hand: i64 = tx.query_row(
+            "SELECT COALESCE(SUM(quantity_milli),0) FROM stock_movements WHERE product_id=?1",
+            [id], |r| r.get(0)
+        ).map_err(|e| format!("تعذر التحقق من رصيد الصنف: {e}"))?;
         if on_hand != 0 {
             return Err(format!("لا يمكن تغيير وحدة الصنف إلى «{unit}» لأن له رصيدًا حاليًا. صفّر الرصيد أو عالج تحويل الوحدة أولًا حتى لا تتغير دلالة الكميات المسجلة."));
         }
     }
-    // Change the primary barcode only when the user explicitly edits that field.
-    // The previous primary is retained as an alternate, so historical barcode data is never lost.
+
     let current_primary: Option<(i64, String)> = tx.query_row(
         "SELECT id,barcode FROM product_barcodes WHERE product_id=?1 AND is_primary=1 LIMIT 1",
         [id], |r| Ok((r.get(0)?, r.get(1)?))
-    ).optional().map_err(|e| e.to_string())?;
+    ).optional().map_err(|e| format!("تعذر قراءة الباركود الأساسي الحالي: {e}"))?;
     let previous_barcode = current_primary.as_ref().map(|(_, value)| value.as_str().to_owned()).unwrap_or_default();
     let barcode_changed = previous_barcode != barcode;
+
+    // Validate ownership before modifying any primary flag. The transaction protects all changes as one unit.
+    let mut target_barcode_row: Option<i64> = current_primary.as_ref().and_then(|(row_id, current)| {
+        if current.as_str() == barcode { Some(*row_id) } else { None }
+    });
     if barcode_changed {
         if !actor.permissions.iter().any(|p| p == "products.barcode.manage") {
             return Err("لا تملك صلاحية تغيير الباركود الأساسي".into());
@@ -1040,28 +1064,60 @@ fn update_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, co
         let existing: Option<(i64, i64)> = tx.query_row(
             "SELECT id,product_id FROM product_barcodes WHERE barcode=?1 LIMIT 1",
             [barcode], |r| Ok((r.get(0)?, r.get(1)?))
-        ).optional().map_err(|e| e.to_string())?;
-        if let Some((_, owner_id)) = existing {
+        ).optional().map_err(|e| format!("تعذر التحقق من الباركود: {e}"))?;
+        if let Some((row_id, owner_id)) = existing {
             if owner_id != id {
                 return Err("الباركود مستخدم بالفعل لصنف آخر. أدخل باركود مختلفًا.".into());
             }
-        }
-        // Demote the current primary first to satisfy the unique partial index.
-        tx.execute("UPDATE product_barcodes SET is_primary=0 WHERE product_id=?1 AND is_primary=1", [id]).map_err(|e| e.to_string())?;
-        if let Some((barcode_row_id, _)) = existing {
-            // The requested barcode already exists as this product's alternate: promote it.
-            tx.execute("UPDATE product_barcodes SET is_primary=1,unit=?1 WHERE id=?2 AND product_id=?3", params![unit, barcode_row_id, id]).map_err(|e| e.to_string())?;
+            target_barcode_row = Some(row_id);
         } else {
-            // Insert the new primary; the former primary remains stored as an alternate.
-            tx.execute("INSERT INTO product_barcodes(product_id,unit,barcode,barcode_type,is_primary) VALUES (?1,?2,?3,'alternate',1)", params![id,unit,barcode]).map_err(|e| format!("تعذر حفظ الباركود الأساسي: {e}"))?;
+            // Create it as an alternate first. It becomes primary only after all validation is complete.
+            tx.execute(
+                "INSERT INTO product_barcodes(product_id,unit,barcode,barcode_type,is_primary) VALUES (?1,?2,?3,'alternate',0)",
+                params![id, unit, barcode]
+            ).map_err(|e| format!("تعذر تسجيل الباركود الجديد: {e}"))?;
+            target_barcode_row = Some(tx.last_insert_rowid());
         }
     }
-    tx.execute("UPDATE products SET code=?1,name=?2,unit=?3,purchase_price_minor=?4,sale_price_minor=?5,updated_at=datetime('now') WHERE id=?6", params![code,name,unit,purchase_price_minor,sale_price_minor,id]).map_err(|e| format!("تعذر تعديل الصنف (تأكد أن الكود غير مستخدم): {e}"))?;
-    tx.execute("UPDATE product_barcodes SET unit=?1 WHERE product_id=?2 AND is_primary=1", params![unit,id]).map_err(|e| e.to_string())?;
-    let audit_barcode_detail = if barcode_changed { format!("primary_barcode_changed_from={previous_barcode}; primary_barcode={barcode}; old_barcode_preserved_as_alternate=true") } else { format!("primary_barcode={barcode}; primary_barcode_changed=false") };
-    write_audit(&tx, Some(&actor), "update", "product", Some(&id.to_string()), &format!("code={code}; name={name}; unit={unit}; {audit_barcode_detail}"))?;
-    let row = tx.query_row("SELECT p.id,p.code,p.name,p.unit,COALESCE((SELECT barcode FROM product_barcodes WHERE product_id=p.id AND is_primary=1 LIMIT 1),''),p.purchase_price_minor,p.sale_price_minor FROM products p WHERE p.id=?1", [id], |r| Ok(ProductRow { id:r.get(0)?,code:r.get(1)?,name:r.get(2)?,unit:r.get(3)?,barcode:r.get(4)?,purchase_price_minor:r.get(5)?,sale_price_minor:r.get(6)? })).map_err(|e| e.to_string())?;
-    tx.commit().map_err(|e| e.to_string())?;
+
+    // Update product fields only after validation. A failure below rolls the whole transaction back.
+    tx.execute(
+        "UPDATE products SET code=?1,name=?2,unit=?3,purchase_price_minor=?4,sale_price_minor=?5,updated_at=datetime('now') WHERE id=?6",
+        params![code, name, unit, purchase_price_minor, sale_price_minor, id]
+    ).map_err(|e| format!("تعذر تعديل الصنف (تأكد أن الكود غير مستخدم): {e}"))?;
+
+    if barcode_changed {
+        tx.execute(
+            "UPDATE product_barcodes SET is_primary=0 WHERE product_id=?1 AND is_primary=1",
+            [id]
+        ).map_err(|e| format!("تعذر إلغاء تعيين الباركود الأساسي السابق: {e}"))?;
+        let row_id = target_barcode_row.ok_or_else(|| "تعذر تحديد سجل الباركود الجديد".to_string())?;
+        let changed = tx.execute(
+            "UPDATE product_barcodes SET is_primary=1,unit=?1 WHERE id=?2 AND product_id=?3",
+            params![unit, row_id, id]
+        ).map_err(|e| format!("تعذر تفعيل الباركود الأساسي الجديد: {e}"))?;
+        if changed != 1 {
+            return Err("لم يتم العثور على سجل الباركود لتفعيله؛ لم يتم حفظ التعديل".into());
+        }
+    } else {
+        tx.execute(
+            "UPDATE product_barcodes SET unit=?1 WHERE product_id=?2 AND is_primary=1",
+            params![unit, id]
+        ).map_err(|e| format!("تعذر تحديث وحدة الباركود الأساسي: {e}"))?;
+    }
+
+    let audit_barcode_detail = if barcode_changed {
+        format!("primary_barcode_changed_from={previous_barcode}; primary_barcode={barcode}; old_barcode_preserved_as_alternate=true")
+    } else {
+        format!("primary_barcode={barcode}; primary_barcode_changed=false")
+    };
+    write_audit(&tx, Some(&actor), "update", "product", Some(&id.to_string()), &format!("code={code}; name={name}; unit={unit}; {audit_barcode_detail}"))
+        .map_err(|e| format!("تعذر تسجيل التعديل في سجل النشاط: {e}"))?;
+    let row = tx.query_row(
+        "SELECT p.id,p.code,p.name,p.unit,COALESCE((SELECT barcode FROM product_barcodes WHERE product_id=p.id AND is_primary=1 LIMIT 1),''),p.purchase_price_minor,p.sale_price_minor FROM products p WHERE p.id=?1",
+        [id], |r| Ok(ProductRow { id:r.get(0)?, code:r.get(1)?, name:r.get(2)?, unit:r.get(3)?, barcode:r.get(4)?, purchase_price_minor:r.get(5)?, sale_price_minor:r.get(6)? })
+    ).map_err(|e| format!("تم تحديث البيانات لكن تعذر إعادة قراءة الصنف قبل اعتماد التعديل: {e}"))?;
+    tx.commit().map_err(|e| format!("تعذر اعتماد تعديل الصنف: {e}"))?;
     Ok(row)
 }
 
