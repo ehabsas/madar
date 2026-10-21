@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>مدار | نظام إدارة الأعمال</title>
+<style>
+:root{font-family:Tahoma,Arial,sans-serif;background:#f3f6fa;color:#17243a}*{box-sizing:border-box}body{margin:0}header{background:#14243b;color:white;padding:20px 28px;display:flex;justify-content:space-between;align-items:center}.brand{display:flex;align-items:center;gap:12px}.mark{width:44px;height:44px;border-radius:12px;background:#21b7ad;color:#14243b;display:grid;place-items:center;font-size:24px;font-weight:bold}h1{margin:0;font-size:25px}header p{margin:5px 0 0;color:#c6d5e8}main{max-width:1120px;margin:28px auto;padding:0 18px}.panel{background:white;border:1px solid #e0e7ef;border-radius:16px;padding:22px;margin-bottom:18px}.muted{color:#617087;line-height:1.7}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}.field{display:flex;flex-direction:column;gap:7px}.field input{border:1px solid #ccd6e2;border-radius:9px;padding:12px;font:inherit;min-width:0}.btn{border:0;border-radius:9px;padding:12px 18px;background:#087d76;color:white;font:inherit;cursor:pointer}.btn.secondary{background:#e7edf4;color:#17243a}.btn.danger{background:#a92f3b;color:white}.backup-note{font-size:14px;margin-top:8px}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}.pill{display:inline-block;padding:6px 10px;border-radius:99px;background:#e1f6f4;color:#087d76;font-size:13px}.status{margin-top:12px;white-space:pre-wrap}.tablewrap{overflow:auto}.restore-list{display:grid;gap:10px;margin-top:14px}.restore-item{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:14px;border:1px solid #e0e7ef;border-radius:12px;background:#fbfcfe}.restore-meta{display:grid;gap:5px}.restore-meta strong{overflow-wrap:anywhere}.restore-empty{padding:14px;background:#f7f9fc;border-radius:10px}.confirm-overlay{position:fixed;inset:0;background:rgba(10,20,35,.58);display:grid;place-items:center;padding:20px;z-index:9999}.confirm-overlay[hidden]{display:none}.confirm-box{width:min(520px,100%);background:#fff;border-radius:16px;padding:24px;box-shadow:0 20px 70px rgba(0,0,0,.25)}.confirm-box h3{margin-top:0}.confirm-box p{line-height:1.8;color:#44536a;white-space:pre-wrap}.confirm-actions{display:flex;gap:10px;justify-content:flex-start;flex-wrap:wrap;margin-top:20px}table{border-collapse:collapse;width:100%;min-width:600px}th,td{text-align:right;padding:10px;border-bottom:1px solid #e5ebf2}th{background:#f7f9fc}code{direction:ltr;display:inline-block;font-size:14px}footer{text-align:center;padding:20px;color:#718096;font-size:13px}
+</style></head><body>
+<header><div class="brand"><div class="mark">م</div><div><h1>مدار</h1><p>نظام إدارة المبيعات والمخازن والحسابات</p></div></div><span class="pill">نسخة تطوير 0.2.0</span></header>
+<main>
+<section class="panel"><h2>أهلًا بك في مدار</h2><p class="muted">تطبيق مكتبي محلي بقاعدة SQLite. كل صنف جديد يحصل على باركود أساسي تلقائيًا إذا لم تدخل باركودًا موجودًا.</p><span class="pill">الباركود فريد ولا يتكرر</span> <span class="pill">دعم قارئ الباركود USB كإدخال لوحة مفاتيح</span></section>
+<section class="panel"><h2>إضافة صنف تجريبية</h2><p class="muted">هذه الواجهة مرتبطة بأوامر Rust داخل التطبيق؛ الأسعار تحفظ كأعداد صحيحة بوحدة العملة الصغرى لتجنب أخطاء الكسور العشرية.</p>
+<form id="productForm"><div class="grid"><label class="field">كود الصنف<input id="code" required placeholder="مثال: P-1001"/></label><label class="field">اسم الصنف<input id="name" required placeholder="اسم الصنف"/></label><label class="field">الوحدة<input id="unit" value="قطعة" required/></label><label class="field">الباركود الحالي (اختياري)<input id="barcode" placeholder="اتركه فارغًا للتوليد التلقائي"/></label><label class="field">سعر الشراء<input id="purchase" type="number" min="0" step="0.01" value="0" required/></label><label class="field">سعر البيع<input id="sale" type="number" min="0" step="0.01" value="0" required/></label></div><div class="actions"><button class="btn" type="submit">حفظ الصنف وتوليد الباركود</button><button class="btn secondary" id="refresh" type="button">تحديث القائمة</button></div><div class="status muted" id="status" role="status"></div></form></section>
+<section class="panel"><h2>النسخ الاحتياطي واستعادة البيانات</h2><p class="muted">أنشئ نسخة احتياطية في المكان الذي تختاره. وعند الاستعادة، يحفظ مدار نسخة تلقائية من الوضع الحالي قبل التغيير، وتظهر هذه النسخ في قائمة نقاط الاستعادة بالأسفل حتى تتمكن من الرجوع إليها بضغطة واحدة.</p><div class="actions"><button class="btn" id="backupBtn" type="button">إنشاء نسخة احتياطية إلى ملف</button><button class="btn secondary" id="restoreBtn" type="button">استعادة من ملف خارجي</button><button class="btn secondary" id="refreshRestorePoints" type="button">تحديث نقاط الاستعادة</button></div><div class="status muted" id="backupStatus" role="status" aria-live="polite"></div><h3>نقاط الاستعادة المحفوظة داخل مدار</h3><p class="muted">هذه نسخ الأمان التلقائية التي أنشأها مدار قبل عمليات الاستعادة السابقة، مرتبة من الأحدث إلى الأقدم.</p><div id="restorePoints" class="restore-list"><div class="restore-empty muted">جارٍ تحميل نقاط الاستعادة...</div></div></section>
+<section class="panel"><h2>الأصناف المسجلة</h2><div class="tablewrap"><table><thead><tr><th>الكود</th><th>اسم الصنف</th><th>الوحدة</th><th>الباركود</th><th>سعر البيع</th></tr></thead><tbody id="products"><tr><td colspan="5" class="muted">شغّل التطبيق لتحميل البيانات.</td></tr></tbody></table></div></section>
+<section class="panel"><h2>قواعد الباركود</h2><ul class="muted"><li>نحافظ على الباركود القديم إذا كان موجودًا وفريدًا.</li><li>لو مش موجود، يُنشأ باركود داخلي بصيغة MAD متوافق مع الطباعة عبر Code 128.</li><li>يمكن لاحقًا إضافة باركودات متعددة للصنف حسب العبوة أو الوحدة.</li><li>الباركود الداخلي لا يُعد رقم GTIN عالميًا ولا يُستخدم كبديل لباركود تجاري مسجل.</li></ul></section>
+</main><footer>مدار © 2026 — نسخة تطوير أولية، يلزم بناؤها واختبارها قبل الاستخدام الفعلي.</footer>
+<div id="restoreConfirmOverlay" class="confirm-overlay" hidden>
+ <section class="confirm-box" role="dialog" aria-modal="true" aria-labelledby="restoreConfirmTitle" aria-describedby="restoreConfirmMessage">
+  <h3 id="restoreConfirmTitle">تأكيد استعادة البيانات</h3>
+  <p id="restoreConfirmMessage"></p>
+  <div class="confirm-actions"><button class="btn danger" id="restoreConfirmOk" type="button">موافق، استعد النسخة</button><button class="btn secondary" id="restoreConfirmCancel" type="button">إلغاء</button></div>
+ </section>
+</div>
+<script>
+const invoke = window.__TAURI__?.core?.invoke;
+const statusEl=document.getElementById('status');
+const money=n=>(Number(n||0)/100).toFixed(2);
+async function refreshProducts(){if(!invoke){statusEl.textContent='واجهة المعاينة فقط: افتح المشروع داخل تطبيق Tauri لتفعيل حفظ البيانات.';return;}try{const rows=await invoke('list_products');document.getElementById('products').innerHTML=rows.map(p=>`<tr><td>${escapeHtml(p.code)}</td><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.unit)}</td><td><code>${escapeHtml(p.barcode)}</code></td><td>${money(p.sale_price_minor)}</td></tr>`).join('')||'<tr><td colspan="5">لا توجد أصناف حتى الآن.</td></tr>';}catch(e){statusEl.textContent='تعذر تحميل الأصناف: '+e;}}
+function escapeHtml(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+document.getElementById('productForm').addEventListener('submit',async e=>{e.preventDefault();if(!invoke){statusEl.textContent='الحفظ متاح عند تشغيل التطبيق داخل Tauri بعد إعداد بيئة البناء.';return;}try{const p=await invoke('create_product',{code:document.getElementById('code').value,name:document.getElementById('name').value,unit:document.getElementById('unit').value,barcode:document.getElementById('barcode').value||null,purchasePriceMinor:Math.round(Number(document.getElementById('purchase').value)*100),salePriceMinor:Math.round(Number(document.getElementById('sale').value)*100)});statusEl.textContent=`تم حفظ الصنف: ${p.name}
+الباركود: ${p.barcode}`;document.getElementById('barcode').value='';await refreshProducts();}catch(err){statusEl.textContent='فشل الحفظ: '+err;}});
+document.getElementById('refresh').addEventListener('click',refreshProducts);
+const backupStatus=document.getElementById('backupStatus');
+const restorePointsEl=document.getElementById('restorePoints');
+const dialog=window.__TAURI__?.dialog;
+function confirmRestore(message){
+ return new Promise(resolve=>{
+  const overlay=document.getElementById('restoreConfirmOverlay');
+  const ok=document.getElementById('restoreConfirmOk');
+  const cancel=document.getElementById('restoreConfirmCancel');
+  document.getElementById('restoreConfirmMessage').textContent=message;
+  overlay.hidden=false;
+  const finish=value=>{overlay.hidden=true;ok.removeEventListener('click',onOk);cancel.removeEventListener('click',onCancel);resolve(value);};
+  const onOk=()=>finish(true);
+  const onCancel=()=>finish(false);
+  ok.addEventListener('click',onOk,{once:true});
+  cancel.addEventListener('click',onCancel,{once:true});
+ });
+}
+async function refreshRestorePoints(){
+ if(!invoke){restorePointsEl.innerHTML='<div class="restore-empty muted">قائمة نقاط الاستعادة تظهر عند تشغيل تطبيق مدار.</div>';return;}
+ try{
+  const points=await invoke('list_restore_points');
+  if(!points.length){restorePointsEl.innerHTML='<div class="restore-empty muted">لا توجد نقاط استعادة تلقائية حتى الآن. عند تنفيذ أول استعادة، سيحفظ مدار الوضع الحالي هنا تلقائيًا.</div>';return;}
+  restorePointsEl.innerHTML=points.map((p,i)=>`<div class="restore-item"><div class="restore-meta"><strong>${i===0?'أحدث نقطة استعادة':'نقطة استعادة '+(i+1)}</strong><span class="muted">${new Date(Number(p.modified_at_secs)*1000).toLocaleString('ar-EG')}</span><span class="muted">حجم النسخة: ${(Number(p.size_bytes)/1024/1024).toFixed(2)} ميجابايت</span><code>${escapeHtml(p.file_name)}</code></div><div class="actions" style="margin-top:0"><button class="btn danger restore-point-btn" data-path="${escapeHtml(p.path)}" type="button">استعادة هذه النسخة</button><button class="btn secondary delete-point-btn" data-path="${escapeHtml(p.path)}" data-name="${escapeHtml(p.file_name)}" type="button">حذف النسخة</button></div></div>`).join('');
+  restorePointsEl.querySelectorAll('.delete-point-btn').forEach(btn=>btn.addEventListener('click',async()=>{
+   const path=btn.dataset.path;const name=btn.dataset.name;
+   if(!(await confirmRestore(`هل تريد حذف نقطة الاستعادة التالية نهائيًا؟\n${name}\n\nلن يمكن التراجع عن الحذف.`))){backupStatus.textContent='تم إلغاء حذف نقطة الاستعادة.';return;}
+   btn.disabled=true;backupStatus.textContent='جارٍ حذف نقطة الاستعادة...';
+   try{backupStatus.textContent=await invoke('delete_restore_point',{pointPath:path});await refreshRestorePoints();}
+   catch(err){backupStatus.textContent='فشل حذف نقطة الاستعادة: '+err;btn.disabled=false;}
+  }));
+  restorePointsEl.querySelectorAll('.restore-point-btn').forEach(btn=>btn.addEventListener('click',async()=>{
+   const path=btn.dataset.path;
+   if(!(await confirmRestore('سيتم استبدال البيانات الحالية بمحتويات نقطة الاستعادة المحددة. بعد الضغط على موافق فقط، سيحفظ مدار الوضع الحالي كنقطة أمان ثم يبدأ الاستعادة. هل تريد المتابعة؟'))) {backupStatus.textContent='تم إلغاء الاستعادة. لم يتم إنشاء نسخة أمان.';return;}
+   btn.disabled=true;backupStatus.textContent='جارٍ التحقق من نقطة الاستعادة وتطبيقها...';
+   try{const result=await invoke('restore_backup',{backupPath:path});backupStatus.textContent=result+'\nتم تحديث البيانات.';await refreshProducts();await refreshRestorePoints();}
+   catch(err){backupStatus.textContent='فشلت الاستعادة: '+err;btn.disabled=false;}
+  }));
+ }catch(err){restorePointsEl.innerHTML='<div class="restore-empty muted">تعذر تحميل نقاط الاستعادة: '+escapeHtml(err)+'</div>';}
+}
+document.getElementById('refreshRestorePoints').addEventListener('click',refreshRestorePoints);
+function timestampForFile(){const d=new Date();const pad=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;}
+document.getElementById('backupBtn').addEventListener('click',async()=>{
+ if(!invoke||!dialog?.save){backupStatus.textContent='ميزة اختيار الملفات متاحة عند تشغيل نسخة Tauri المبنية من المشروع.';return;}
+ try{const destination=await dialog.save({title:'حفظ نسخة احتياطية من مدار',defaultPath:`Madar-Backup-${timestampForFile()}.db`,filters:[{name:'قاعدة بيانات SQLite',extensions:['db','sqlite']}]});if(!destination){backupStatus.textContent='تم إلغاء إنشاء النسخة الاحتياطية.';return;}backupStatus.textContent='جارٍ إنشاء النسخة الاحتياطية والتحقق منها...';const saved=await invoke('create_backup',{destination});backupStatus.textContent=`تم إنشاء النسخة الاحتياطية والتحقق من سلامتها:
+${saved}`;}catch(err){backupStatus.textContent='فشل إنشاء النسخة الاحتياطية: '+err;}
+});
+document.getElementById('restoreBtn').addEventListener('click',async()=>{
+ if(!invoke||!dialog?.open){backupStatus.textContent='ميزة اختيار الملفات متاحة عند تشغيل نسخة Tauri المبنية من المشروع.';return;}
+ try{const selected=await dialog.open({title:'اختيار نسخة مدار للاستعادة',multiple:false,directory:false,filters:[{name:'قاعدة بيانات SQLite',extensions:['db','sqlite']}]});if(!selected){backupStatus.textContent='تم إلغاء الاستعادة.';return;}if(!(await confirmRestore('تحذير: ستُستبدل البيانات الحالية بمحتويات النسخة المختارة. بعد الضغط على موافق فقط، سيحتفظ مدار بنسخة أمان من قاعدة البيانات الحالية ثم يبدأ الاستعادة. هل تريد المتابعة؟'))){backupStatus.textContent='تم إلغاء الاستعادة. لم يتم إنشاء نسخة أمان.';return;}backupStatus.textContent='جارٍ التحقق من النسخة واستعادة البيانات...';const result=await invoke('restore_backup',{backupPath:selected});backupStatus.textContent=result+'\nسيُعاد تحميل قائمة الأصناف الآن.';await refreshProducts();await refreshRestorePoints();}catch(err){backupStatus.textContent='فشلت الاستعادة: '+err;}
+});
+refreshProducts();
+refreshRestorePoints();
+</script></body></html>

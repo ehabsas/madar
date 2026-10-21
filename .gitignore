@@ -1,0 +1,49 @@
+# Rust build output
+/target/
+/src-tauri/target/
+
+# Node.js dependencies and build output
+/node_modules/
+/dist/
+/build/
+
+# Tauri generated files
+/src-tauri/gen/
+/src-tauri/target/
+
+# IDE and editor files
+/.zed/
+/.idea/
+/.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# Local databases and database sidecars
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Backups and exports
+*.bak
+*.backup
+*.dump
+*.zip
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+
