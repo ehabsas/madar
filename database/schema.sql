@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS purchase_invoices (
     subtotal_minor INTEGER NOT NULL DEFAULT 0 CHECK (subtotal_minor >= 0),
     discount_minor INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
     total_minor INTEGER NOT NULL DEFAULT 0 CHECK (total_minor >= 0),
+    paid_minor INTEGER NOT NULL DEFAULT 0 CHECK (paid_minor >= 0),
     notes TEXT,
     status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted','cancelled')),
     created_by INTEGER,
@@ -142,7 +143,8 @@ CREATE TABLE IF NOT EXISTS sale_items (
     quantity_milli INTEGER NOT NULL CHECK (quantity_milli > 0),
     unit_price_minor INTEGER NOT NULL CHECK (unit_price_minor >= 0),
     discount_minor INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
-    line_total_minor INTEGER NOT NULL CHECK (line_total_minor >= 0)
+    line_total_minor INTEGER NOT NULL CHECK (line_total_minor >= 0),
+    cost_price_minor INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_sale_items_invoice ON sale_items(sale_id);
 
@@ -159,7 +161,42 @@ INSERT OR IGNORE INTO warehouses(code,name) VALUES ('MAIN', 'المخزن الر
 
 INSERT OR IGNORE INTO app_settings(key, value) VALUES
 ('app_name', 'مدار'),
-('database_schema_version', '8'),
+('database_schema_version', '9'),
 ('barcode_prefix', 'MAD'),
 ('barcode_auto_generate', 'true'),
 ('backup_reminder_enabled', 'true');
+
+
+-- Commercial feature extension (v9): quotations, payments, cashbook and sale cost snapshots.
+CREATE TABLE IF NOT EXISTS quotations (
+    id INTEGER PRIMARY KEY, quote_no TEXT NOT NULL UNIQUE,
+    customer_id INTEGER NOT NULL REFERENCES customers(id), quote_date TEXT NOT NULL, valid_until TEXT,
+    subtotal_minor INTEGER NOT NULL DEFAULT 0 CHECK(subtotal_minor>=0), discount_minor INTEGER NOT NULL DEFAULT 0 CHECK(discount_minor>=0),
+    total_minor INTEGER NOT NULL DEFAULT 0 CHECK(total_minor>=0), notes TEXT,
+    status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','sent','accepted','rejected','expired','converted','cancelled')),
+    converted_sale_id INTEGER, created_by INTEGER, created_by_username TEXT,
+    created_at TEXT NOT NULL DEFAULT(datetime('now')), updated_at TEXT NOT NULL DEFAULT(datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_quotations_date ON quotations(quote_date,id DESC);
+CREATE TABLE IF NOT EXISTS quotation_items (
+    id INTEGER PRIMARY KEY, quotation_id INTEGER NOT NULL REFERENCES quotations(id) ON DELETE CASCADE,
+    product_id INTEGER NOT NULL REFERENCES products(id), unit TEXT NOT NULL DEFAULT 'قطعة', quantity_milli INTEGER NOT NULL CHECK(quantity_milli>0),
+    unit_price_minor INTEGER NOT NULL CHECK(unit_price_minor>=0), discount_minor INTEGER NOT NULL DEFAULT 0 CHECK(discount_minor>=0), line_total_minor INTEGER NOT NULL CHECK(line_total_minor>=0)
+);
+CREATE INDEX IF NOT EXISTS idx_quotation_items_quote ON quotation_items(quotation_id);
+CREATE TABLE IF NOT EXISTS payments (
+    id INTEGER PRIMARY KEY, invoice_type TEXT NOT NULL CHECK(invoice_type IN ('sale','purchase')), invoice_id INTEGER NOT NULL,
+    direction TEXT NOT NULL CHECK(direction IN ('in','out')), amount_minor INTEGER NOT NULL CHECK(amount_minor>0), payment_date TEXT NOT NULL,
+    method TEXT NOT NULL DEFAULT 'cash' CHECK(method IN ('cash','bank','card','transfer','other')), reference_no TEXT, notes TEXT,
+    created_by INTEGER, created_by_username TEXT, created_at TEXT NOT NULL DEFAULT(datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments(invoice_type,invoice_id,id DESC);
+CREATE INDEX IF NOT EXISTS idx_payments_date ON payments(payment_date,id DESC);
+CREATE TABLE IF NOT EXISTS cashbook_entries (
+    id INTEGER PRIMARY KEY, direction TEXT NOT NULL CHECK(direction IN ('in','out')), amount_minor INTEGER NOT NULL CHECK(amount_minor>0),
+    entry_date TEXT NOT NULL, source_type TEXT NOT NULL, source_id INTEGER, description TEXT NOT NULL DEFAULT '', notes TEXT,
+    created_by INTEGER, created_by_username TEXT, created_at TEXT NOT NULL DEFAULT(datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_cashbook_date ON cashbook_entries(entry_date,id DESC);
+
+INSERT OR IGNORE INTO app_settings(key,value) VALUES ('company_name',''),('company_phone',''),('company_email',''),('company_address',''),('company_tax_number',''),('company_commercial_register',''),('company_website',''),('company_logo_data_url',''),('company_invoice_footer',''),('currency_code','EGP');
