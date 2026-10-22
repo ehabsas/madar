@@ -239,7 +239,7 @@ function confirmProductAction(message,title='تأكيد الإجراء',confirmL
   cancel.focus();
  });
 }
-productViewToggle.addEventListener('click',async()=>{
+onElement('productViewToggle','click',async()=>{
  viewingInactiveProducts=!viewingInactiveProducts;
  updateProductViewControls();
  await refreshProducts();
