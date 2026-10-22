@@ -1,5 +1,5 @@
 #[tauri::command]
-fn create_product(app: tauri::AppHandle, state: State<'_, AppState>, code: String, name: String, unit: Option<String>, barcode: Option<String>, purchase_price_minor: i64, sale_price_minor: i64) -> Result<ProductRow, String> {
+fn create_product(app: tauri::AppHandle, state: State<'_, AppState>, code: String, name: String, unit: Option<String>, barcode: Option<String>, purchase_price_minor: i64, sale_price_minor: i64, minimum_quantity_milli: i64) -> Result<ProductRow, String> {
     let actor = require_permission(state.inner(), "products.create")?;
     let path = database_path(&app)?;
     initialize_database(&path)?;
@@ -9,6 +9,7 @@ fn create_product(app: tauri::AppHandle, state: State<'_, AppState>, code: Strin
     let product_name = name.trim();
     if product_code.is_empty() || product_name.is_empty() { return Err("كود الصنف واسم الصنف مطلوبان".into()); }
     if purchase_price_minor < 0 || sale_price_minor < 0 { return Err("السعر لا يمكن أن يكون سالبًا".into()); }
+    if minimum_quantity_milli < 0 { return Err("الحد الأدنى للمخزون لا يمكن أن يكون سالبًا".into()); }
     let unit_value = unit.unwrap_or_else(|| "قطعة".to_string());
     let supplied = barcode.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     let (barcode_value, barcode_type) = match supplied {
@@ -22,12 +23,12 @@ fn create_product(app: tauri::AppHandle, state: State<'_, AppState>, code: Strin
     if duplicate { return Err("الباركود مستخدم بالفعل لصنف آخر. أدخل باركود مختلفًا.".into()); }
     let purchase_price_minor = if actor.permissions.iter().any(|p| p == "products.purchase_price.edit") { purchase_price_minor } else { 0 };
     let sale_price_minor = if actor.permissions.iter().any(|p| p == "products.sale_price.edit") { sale_price_minor } else { 0 };
-    tx.execute("INSERT INTO products(code,name,unit,purchase_price_minor,sale_price_minor) VALUES (?1,?2,?3,?4,?5)", params![product_code, product_name, unit_value, purchase_price_minor, sale_price_minor]).map_err(|e| e.to_string())?;
+    tx.execute("INSERT INTO products(code,name,unit,purchase_price_minor,sale_price_minor,minimum_quantity_milli) VALUES (?1,?2,?3,?4,?5,?6)", params![product_code, product_name, unit_value, purchase_price_minor, sale_price_minor, minimum_quantity_milli]).map_err(|e| e.to_string())?;
     let id = tx.last_insert_rowid();
     tx.execute("INSERT INTO product_barcodes(product_id,unit,barcode,barcode_type,is_primary) VALUES (?1,?2,?3,?4,1)", params![id, unit_value, barcode_value, barcode_type]).map_err(|e| e.to_string())?;
     write_audit(&tx, Some(&actor), "create", "product", Some(&id.to_string()), &format!("code={}; barcode={}", product_code, barcode_value))?;
     tx.commit().map_err(|e| e.to_string())?;
-    Ok(ProductRow { id, code: product_code.to_string(), name: product_name.to_string(), unit: unit_value, barcode: barcode_value, purchase_price_minor, sale_price_minor })
+    Ok(ProductRow { id, code: product_code.to_string(), name: product_name.to_string(), unit: unit_value, barcode: barcode_value, purchase_price_minor, sale_price_minor, minimum_quantity_milli })
 }
 
 #[tauri::command]
@@ -37,8 +38,8 @@ fn find_product_by_barcode(app: tauri::AppHandle, state: State<'_, AppState>, ba
     initialize_database(&path)?;
     let conn = connect(&path)?;
     conn.query_row(
-        "SELECT p.id,p.code,p.name,p.unit,b.barcode,p.purchase_price_minor,p.sale_price_minor FROM product_barcodes b JOIN products p ON p.id=b.product_id WHERE b.barcode=?1 AND p.is_active=1 LIMIT 1",
-        [barcode.trim()], |r| Ok(ProductRow { id:r.get(0)?, code:r.get(1)?, name:r.get(2)?, unit:r.get(3)?, barcode:r.get(4)?, purchase_price_minor:r.get(5)?, sale_price_minor:r.get(6)? })
+        "SELECT p.id,p.code,p.name,p.unit,b.barcode,p.purchase_price_minor,p.sale_price_minor,p.minimum_quantity_milli FROM product_barcodes b JOIN products p ON p.id=b.product_id WHERE b.barcode=?1 AND p.is_active=1 LIMIT 1",
+        [barcode.trim()], |r| Ok(ProductRow { id:r.get(0)?, code:r.get(1)?, name:r.get(2)?, unit:r.get(3)?, barcode:r.get(4)?, purchase_price_minor:r.get(5)?, sale_price_minor:r.get(6)?, minimum_quantity_milli:r.get(7)? })
     ).optional().map_err(|e| e.to_string())
 }
 
@@ -115,7 +116,7 @@ fn reactivate_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64
 }
 
 #[tauri::command]
-fn update_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, code: String, name: String, unit: String, barcode: String, purchase_price_minor: i64, sale_price_minor: i64) -> Result<ProductRow, String> {
+fn update_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, code: String, name: String, unit: String, barcode: String, purchase_price_minor: i64, sale_price_minor: i64, minimum_quantity_milli: i64) -> Result<ProductRow, String> {
     let actor = require_permission(state.inner(), "products.edit")?;
     let path = database_path(&app)?;
     initialize_database(&path)?;
@@ -135,6 +136,7 @@ fn update_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, co
     if purchase_price_minor < 0 || sale_price_minor < 0 {
         return Err("السعر لا يمكن أن يكون سالبًا".into());
     }
+    if minimum_quantity_milli < 0 { return Err("الحد الأدنى للمخزون لا يمكن أن يكون سالبًا".into()); }
 
     let current: Option<(String, i64, i64)> = tx.query_row(
         "SELECT unit,purchase_price_minor,sale_price_minor FROM products WHERE id=?1 AND is_active=1",
@@ -202,8 +204,8 @@ fn update_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, co
 
     // Update product fields only after validation. A failure below rolls the whole transaction back.
     tx.execute(
-        "UPDATE products SET code=?1,name=?2,unit=?3,purchase_price_minor=?4,sale_price_minor=?5,updated_at=datetime('now') WHERE id=?6",
-        params![code, name, unit, purchase_price_minor, sale_price_minor, id]
+        "UPDATE products SET code=?1,name=?2,unit=?3,purchase_price_minor=?4,sale_price_minor=?5,minimum_quantity_milli=?6,updated_at=datetime('now') WHERE id=?7",
+        params![code, name, unit, purchase_price_minor, sale_price_minor, minimum_quantity_milli, id]
     ).map_err(|e| format!("تعذر تعديل الصنف (تأكد أن الكود غير مستخدم): {e}"))?;
 
     if barcode_changed {
@@ -234,8 +236,8 @@ fn update_product(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, co
     write_audit(&tx, Some(&actor), "update", "product", Some(&id.to_string()), &format!("code={code}; name={name}; unit={unit}; {audit_barcode_detail}"))
         .map_err(|e| format!("تعذر تسجيل التعديل في سجل النشاط: {e}"))?;
     let row = tx.query_row(
-        "SELECT p.id,p.code,p.name,p.unit,COALESCE((SELECT barcode FROM product_barcodes WHERE product_id=p.id AND is_primary=1 LIMIT 1),''),p.purchase_price_minor,p.sale_price_minor FROM products p WHERE p.id=?1",
-        [id], |r| Ok(ProductRow { id:r.get(0)?, code:r.get(1)?, name:r.get(2)?, unit:r.get(3)?, barcode:r.get(4)?, purchase_price_minor:r.get(5)?, sale_price_minor:r.get(6)? })
+        "SELECT p.id,p.code,p.name,p.unit,COALESCE((SELECT barcode FROM product_barcodes WHERE product_id=p.id AND is_primary=1 LIMIT 1),''),p.purchase_price_minor,p.sale_price_minor,p.minimum_quantity_milli FROM products p WHERE p.id=?1",
+        [id], |r| Ok(ProductRow { id:r.get(0)?, code:r.get(1)?, name:r.get(2)?, unit:r.get(3)?, barcode:r.get(4)?, purchase_price_minor:r.get(5)?, sale_price_minor:r.get(6)?, minimum_quantity_milli:r.get(7)? })
     ).map_err(|e| format!("تم تحديث البيانات لكن تعذر إعادة قراءة الصنف قبل اعتماد التعديل: {e}"))?;
     tx.commit().map_err(|e| format!("تعذر اعتماد تعديل الصنف: {e}"))?;
     Ok(row)

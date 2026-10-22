@@ -9,13 +9,13 @@ fn list_stock(app: tauri::AppHandle, state: State<'_, AppState>, query: String) 
     let mut stmt = conn.prepare(
         "SELECT p.id,p.code,p.name,p.unit,
                 COALESCE((SELECT b.barcode FROM product_barcodes b WHERE b.product_id=p.id AND b.is_primary=1 LIMIT 1),''),
-                COALESCE(SUM(sm.quantity_milli),0),p.is_active
+                COALESCE(SUM(sm.quantity_milli),0),p.minimum_quantity_milli,p.is_active
          FROM products p
          LEFT JOIN stock_movements sm ON sm.product_id=p.id
          WHERE (?1='' OR p.name LIKE ?2 OR p.code LIKE ?2 OR EXISTS(
              SELECT 1 FROM product_barcodes bx WHERE bx.product_id=p.id AND bx.barcode LIKE ?2
          ))
-         GROUP BY p.id,p.code,p.name,p.unit,p.is_active
+         GROUP BY p.id,p.code,p.name,p.unit,p.minimum_quantity_milli,p.is_active
          ORDER BY p.is_active DESC,p.name COLLATE NOCASE LIMIT 1000"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map(params![q, like], |r| Ok(StockRow {
@@ -25,7 +25,8 @@ fn list_stock(app: tauri::AppHandle, state: State<'_, AppState>, query: String) 
         unit: r.get(3)?,
         barcode: r.get(4)?,
         quantity_milli: r.get(5)?,
-        is_active: r.get::<_, i64>(6)? != 0,
+        minimum_quantity_milli: r.get(6)?,
+        is_active: r.get::<_, i64>(7)? != 0,
     })).map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }

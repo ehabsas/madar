@@ -669,7 +669,7 @@ fn list_audit_log(
 #[derive(Serialize)]
 struct ProductRow {
     id: i64, code: String, name: String, unit: String, barcode: String,
-    purchase_price_minor: i64, sale_price_minor: i64,
+    purchase_price_minor: i64, sale_price_minor: i64, minimum_quantity_milli: i64,
 }
 
 fn validate_barcode(value: &str) -> Result<String, String> {
@@ -711,11 +711,11 @@ fn search_products_db(conn: &Connection, query: &str, is_active: bool) -> Result
     let q = query.trim();
     let like = format!("%{}%", q);
     let mut stmt = conn.prepare(
-        "SELECT p.id,p.code,p.name,p.unit,COALESCE((SELECT b.barcode FROM product_barcodes b WHERE b.product_id=p.id AND b.is_primary=1 LIMIT 1),''),p.purchase_price_minor,p.sale_price_minor
+        "SELECT p.id,p.code,p.name,p.unit,COALESCE((SELECT b.barcode FROM product_barcodes b WHERE b.product_id=p.id AND b.is_primary=1 LIMIT 1),''),p.purchase_price_minor,p.sale_price_minor,p.minimum_quantity_milli
          FROM products p WHERE p.is_active=?1 AND (?2='' OR p.name LIKE ?3 OR p.code LIKE ?3 OR EXISTS(SELECT 1 FROM product_barcodes bx WHERE bx.product_id=p.id AND bx.barcode LIKE ?3))
          ORDER BY p.name COLLATE NOCASE LIMIT 500"
     ).map_err(|e| e.to_string())?;
-    let rows = stmt.query_map(params![if is_active { 1 } else { 0 }, q, like], |r| Ok(ProductRow { id:r.get(0)?, code:r.get(1)?, name:r.get(2)?, unit:r.get(3)?, barcode:r.get(4)?, purchase_price_minor:r.get(5)?, sale_price_minor:r.get(6)? })).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(params![if is_active { 1 } else { 0 }, q, like], |r| Ok(ProductRow { id:r.get(0)?, code:r.get(1)?, name:r.get(2)?, unit:r.get(3)?, barcode:r.get(4)?, purchase_price_minor:r.get(5)?, sale_price_minor:r.get(6)?, minimum_quantity_milli:r.get(7)? })).map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())
 }
 
@@ -745,6 +745,7 @@ struct StockRow {
     unit: String,
     barcode: String,
     quantity_milli: i64,
+    minimum_quantity_milli: i64,
     is_active: bool,
 }
 
@@ -1002,7 +1003,7 @@ fn get_financial_summary(app:tauri::AppHandle,state:State<'_,AppState>,from_date
  let outstanding_purchases:i64=conn.query_row("SELECT COALESCE(SUM(total_minor-paid_minor),0) FROM purchase_invoices WHERE status='posted'",[],|r|r.get(0)).map_err(|e|e.to_string())?;
  let gross_profit: i64=conn.query_row("SELECT COALESCE(SUM(s.total_minor - COALESCE(s.tax_minor,0) - COALESCE((SELECT SUM(CAST(si.quantity_milli * si.cost_price_minor / 1000 AS INTEGER)) FROM sale_items si WHERE si.sale_id=s.id AND si.cost_price_minor IS NOT NULL),0)),0) FROM sales s WHERE s.status='posted' AND s.invoice_date BETWEEN ?1 AND ?2 AND NOT EXISTS(SELECT 1 FROM sale_items si WHERE si.sale_id=s.id AND si.cost_price_minor IS NULL)",params![from_date,to_date],|r|r.get(0)).map_err(|e|e.to_string())?;
  let unknown_cost_sales:i64=conn.query_row("SELECT COUNT(*) FROM sales s WHERE s.status='posted' AND s.invoice_date BETWEEN ?1 AND ?2 AND EXISTS(SELECT 1 FROM sale_items si WHERE si.sale_id=s.id AND si.cost_price_minor IS NULL)",params![from_date,to_date],|r|r.get(0)).map_err(|e|e.to_string())?;
- let low_stock:i64=conn.query_row("SELECT COUNT(*) FROM products p WHERE p.is_active=1 AND p.minimum_quantity_milli>0 AND (SELECT COALESCE(SUM(sm.quantity_milli),0) FROM stock_movements sm WHERE sm.product_id=p.id)<p.minimum_quantity_milli",[],|r|r.get(0)).map_err(|e|e.to_string())?;
+ let low_stock:i64=conn.query_row("SELECT COUNT(*) FROM products p WHERE p.is_active=1 AND p.minimum_quantity_milli>0 AND (SELECT COALESCE(SUM(sm.quantity_milli),0) FROM stock_movements sm WHERE sm.product_id=p.id)<=p.minimum_quantity_milli",[],|r|r.get(0)).map_err(|e|e.to_string())?;
  Ok(serde_json::json!({"fromDate":from_date,"toDate":to_date,"salesMinor":sales,"purchasesMinor":purchases,"receivedMinor":received,"paidMinor":paid,"outstandingSalesMinor":outstanding_sales,"outstandingPurchasesMinor":outstanding_purchases,"grossProfitMinor":gross_profit,"salesTaxMinor":sales_tax,"purchasesTaxMinor":purchases_tax,"salesMissingCostSnapshot":unknown_cost_sales,"lowStockProducts":low_stock}))
 }
 

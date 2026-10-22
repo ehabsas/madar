@@ -3,8 +3,9 @@
  <section class="panel">
   <div class="product-toolbar"><div><h2>أرصدة الأصناف</h2><p class="muted">يعرض الرصيد الحالي لكل صنف، بما في ذلك الأصناف الموقوفة حتى لا تضيع أرصدتها من العرض.</p></div><div class="actions product-toolbar-actions" style="margin:0"><button class="btn secondary" id="refreshStockBtn" type="button">تحديث المخزون</button></div></div>
   <label class="field">بحث بالاسم أو الكود أو الباركود<input id="stockSearch" type="search" placeholder="امسح باركودًا أو اكتب اسم الصنف / الكود" autocomplete="off"/></label>
-  <div class="tablewrap"><table><thead><tr><th>الكود</th><th>الصنف</th><th>الوحدة</th><th>الباركود الأساسي</th><th>الرصيد الحالي</th><th>الحالة</th></tr></thead><tbody id="stockBalances"><tr><td colspan="6" class="muted">جارٍ تحميل أرصدة المخزون...</td></tr></tbody></table></div>
+  <div class="tablewrap"><table><thead><tr><th>الكود</th><th>الصنف</th><th>الوحدة</th><th>الباركود الأساسي</th><th>الرصيد الحالي</th><th>حد التنبيه</th><th>الحالة</th></tr></thead><tbody id="stockBalances"><tr><td colspan="7" class="muted">جارٍ تحميل أرصدة المخزون...</td></tr></tbody></table></div>
   <div id="stockListStatus" class="status muted" role="status" aria-live="polite"></div>
+  <section class="panel" style="margin-top:14px"><h3>تنبيهات المخزون المنخفض</h3><p id="lowStockStatus" class="status muted" role="status" aria-live="polite">جارٍ حساب الأصناف التي وصلت إلى حد التنبيه...</p><div class="tablewrap"><table><thead><tr><th>الكود</th><th>الصنف</th><th>الرصيد</th><th>حد التنبيه</th></tr></thead><tbody id="lowStockRows"><tr><td colspan="4" class="muted">جارٍ التحميل...</td></tr></tbody></table></div></section>
  </section>
  <section class="panel" data-permission="stock.movement.record">
   <h2>تسجيل حركة مخزون</h2><p class="muted">استخدم «وارد» لإضافة كمية إلى الرصيد، و«منصرف» لصرف كمية موجودة. يمنع مدار صرف كمية أكبر من الرصيد المتاح، ولا يسمح بتسجيل حركة لصنف موقوف. تُحفظ وحدة القياس مع كل حركة؛ ولا يمكن تغيير وحدة صنف له رصيد حالي حتى لا تتغير دلالة الكميات.</p>

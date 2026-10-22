@@ -100,3 +100,13 @@ The desktop UI uses a persistent shell in `src/index.html`, shared runtime code 
 Each page has a matching set of files under `src/pages/`: `<page>.html`, `<page>.js`, and `<page>.css`. Page JavaScript modules are loaded once on first visit and expose a `mount()` hook through `window.MadarPageModules`; page-specific CSS is linked on demand and remains scoped to its page root. Shared styling stays in `src/styles.css` to avoid duplicating common components. `onElement()` queues listeners for controls belonging to templates that have not been loaded yet and binds them when the relevant page enters the DOM.
 
 This organization keeps Tauri commands and shared application services in the shared runtime while moving template delivery and page initialization to an on-demand lifecycle.
+
+
+## إضافات تشغيلية حديثة
+
+- لكل صنف حد أدنى اختياري للمخزون، وتظهر قائمة بالأصناف النشطة التي وصل رصيدها إلى الحد أو أقل في شاشة المخزون.
+- يمكن فتح طباعة ملصق بيانات الصنف من قائمة المنتجات، مع الاسم والكود والباركود النصي والسعر. إخراج باركود Code 128 مرئي قابل للمسح واختباره على طابعات فعلية ما زال خطوة لاحقة؛ لا تعتبر الملصقات الحالية بديلًا عن طباعة باركود مرئي.
+- سجل النشاط يحمّل السجلات على دفعات مع تنفيذ البحث في قاعدة البيانات قبل تحديد الدفعة.
+- معاينة الفواتير وعروض الأسعار متاحة قبل فتح نافذة الطباعة.
+
+راجع [خطة التنفيذ](docs/ROADMAP.md) لمعرفة الوظائف المكتملة والمتبقية.

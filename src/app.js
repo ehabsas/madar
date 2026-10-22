@@ -215,6 +215,11 @@ const money=n=>(Number(n||0)/100).toFixed(2);
 let viewingInactiveProducts=false;
 let productViewToggle=document.getElementById('productViewToggle');
 let productViewHelp=document.getElementById('productViewHelp');
+function printProductLabel(p){
+ const w=window.open('', '_blank', 'width=560,height=420');
+ if(!w){statusEl.textContent='تعذر فتح معاينة الملصق؛ اسمح بالنوافذ المنبثقة لمدار ثم حاول مرة أخرى.';return;}
+ const safe=v=>escapeHtml(v);
+ w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>ملصق ${safe(p.name)}</title><style>body{font-family:Arial,sans-serif;margin:0;padding:16px}.label{width:70mm;min-height:35mm;border:1px dashed #888;padding:5mm;box-sizing:border-box;text-align:center;page-break-inside:avoid}.name{font-weight:bold;font-size:14pt;margin-bottom:4mm}.code{font-size:10pt}.barcode{font-family:monospace;font-size:12pt;letter-spacing:1px;margin:3mm 0}.price{font-size:12pt;font-weight:bold}@page{size:80mm 50mm;margin:3mm}@media print{body{padding:0}.label{border:0}}</style></head><body><div class="label"><div class="name">${safe(p.name)}</div><div class="code">كود: ${safe(p.code)}</div><div class="barcode">${safe(p.barcode)}</div><div class="price">${formatInvoiceMoney(p.sale_price_minor)}</div></div><script>window.onload=()=>window.print()<\/script></body></html>`);w.document.close();}
 function updateProductViewControls(){
  if(!productViewToggle||!productViewHelp)return;
  productViewToggle.textContent=viewingInactiveProducts?'العودة إلى الأصناف النشطة':'عرض الأصناف الموقوفة';
@@ -257,13 +262,14 @@ async function refreshProducts(query){
   document.getElementById('products').innerHTML=rows.map(p=>{
    const actions=viewingInactiveProducts
     ?`<button class="btn" data-permission="products.reactivate" data-reactivate-id="${p.id}" data-name="${escapeHtml(p.name)}" type="button">إعادة تفعيل</button>`
-    :`<button class="btn secondary product-edit" data-permission="products.edit" data-id="${p.id}" type="button">تعديل</button><button class="btn secondary product-alt" data-permission="products.barcode.manage" data-id="${p.id}" type="button">باركود بديل</button><button class="btn danger product-deactivate" data-permission="products.deactivate" data-id="${p.id}" data-name="${escapeHtml(p.name)}" type="button">إيقاف</button>`;
-   return `<tr><td>${escapeHtml(p.code)}</td><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.unit)}</td><td><code>${escapeHtml(p.barcode)}</code></td><td>${money(p.purchase_price_minor)}</td><td>${money(p.sale_price_minor)}</td><td><div class="actions" style="margin:0">${actions}</div></td></tr>`;
-  }).join('')||`<tr><td colspan="7" class="muted">${emptyMessage}</td></tr>`;
+    :`<button class="btn secondary product-edit" data-permission="products.edit" data-id="${p.id}" type="button">تعديل</button><button class="btn secondary product-label" data-id="${p.id}" type="button">ملصق</button><button class="btn secondary product-alt" data-permission="products.barcode.manage" data-id="${p.id}" type="button">باركود بديل</button><button class="btn danger product-deactivate" data-permission="products.deactivate" data-id="${p.id}" data-name="${escapeHtml(p.name)}" type="button">إيقاف</button>`;
+   return `<tr><td>${escapeHtml(p.code)}</td><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.unit)}</td><td><code>${escapeHtml(p.barcode)}</code></td><td>${money(p.purchase_price_minor)}</td><td>${money(p.sale_price_minor)}</td><td>${quantityBalanceText(p.minimum_quantity_milli||0)} ${escapeHtml(p.unit)}</td><td><div class="actions" style="margin:0">${actions}</div></td></tr>`;
+  }).join('')||`<tr><td colspan="8" class="muted">${emptyMessage}</td></tr>`;
   applyElementPermissions();
   const count=document.getElementById('dashboardProductCount');
   if(count&&!term.trim()&&!viewingInactiveProducts)count.textContent=rows.length.toLocaleString(currentLanguage==='en'?'en-US':'ar-EG');
   document.querySelectorAll('.product-edit').forEach(btn=>btn.addEventListener('click',()=>openProductEditor(rows.find(p=>p.id===Number(btn.dataset.id)))));
+  document.querySelectorAll('.product-label').forEach(btn=>btn.addEventListener('click',()=>{const p=rows.find(x=>x.id===Number(btn.dataset.id));if(p)printProductLabel(p);}));
   document.querySelectorAll('.product-alt').forEach(btn=>btn.addEventListener('click',()=>{
    const p=rows.find(x=>x.id===Number(btn.dataset.id));
    if(!p)return;
@@ -309,11 +315,11 @@ async function refreshProducts(query){
 }
 updateProductViewControls();
 function escapeHtml(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function openProductEditor(p){if(!p)return;document.getElementById('editId').value=p.id;document.getElementById('editCode').value=p.code;document.getElementById('editName').value=p.name;document.getElementById('editUnit').value=p.unit;document.getElementById('editBarcode').value=String(p.barcode??'');document.getElementById('editPurchase').value=money(p.purchase_price_minor);document.getElementById('editSale').value=money(p.sale_price_minor);document.getElementById('editProductStatus').textContent='';document.getElementById('editProductStatus').className='status';applyPriceFieldPermissions();document.getElementById('editProductOverlay').hidden=false;document.getElementById('editCode').focus();}
+function openProductEditor(p){if(!p)return;document.getElementById('editId').value=p.id;document.getElementById('editCode').value=p.code;document.getElementById('editName').value=p.name;document.getElementById('editUnit').value=p.unit;document.getElementById('editBarcode').value=String(p.barcode??'');document.getElementById('editPurchase').value=money(p.purchase_price_minor);document.getElementById('editSale').value=money(p.sale_price_minor);document.getElementById('editMinimumQuantity').value=(Number(p.minimum_quantity_milli||0)/1000).toString();document.getElementById('editProductStatus').textContent='';document.getElementById('editProductStatus').className='status';applyPriceFieldPermissions();document.getElementById('editProductOverlay').hidden=false;document.getElementById('editCode').focus();}
 onElement('openAddProduct','click',()=>{
  const form=document.getElementById('productForm');form.reset();
  document.getElementById('unit').value='قطعة';
- document.getElementById('purchase').value='0';document.getElementById('sale').value='0';
+ document.getElementById('purchase').value='0';document.getElementById('sale').value='0';document.getElementById('minimumQuantity').value='0';
  document.getElementById('addProductModalStatus').textContent='';
  document.getElementById('addProductOverlay').hidden=false;
  document.getElementById('code').focus();
@@ -326,7 +332,7 @@ onElement('productForm','submit',async e=>{
  if(!invoke){modalStatus.textContent='الحفظ متاح عند تشغيل التطبيق داخل Tauri.';return;}
  button.disabled=true;modalStatus.textContent='جارٍ حفظ الصنف...';
  try{
-  const p=await invoke('create_product',{code:document.getElementById('code').value,name:document.getElementById('name').value,unit:document.getElementById('unit').value,barcode:document.getElementById('barcode').value||null,purchasePriceMinor:Math.round(Number(document.getElementById('purchase').value)*100),salePriceMinor:Math.round(Number(document.getElementById('sale').value)*100)});
+  const p=await invoke('create_product',{code:document.getElementById('code').value,name:document.getElementById('name').value,unit:document.getElementById('unit').value,barcode:document.getElementById('barcode').value||null,purchasePriceMinor:Math.round(Number(document.getElementById('purchase').value)*100),salePriceMinor:Math.round(Number(document.getElementById('sale').value)*100),minimumQuantityMilli:Math.round(Number(document.getElementById('minimumQuantity').value)*1000)});
   statusEl.textContent=`تم حفظ الصنف: ${p.name}
 الباركود: ${p.barcode}`;
   document.getElementById('productSearch').value='';
@@ -354,7 +360,7 @@ onElement('alternateBarcodeForm','submit',async e=>{
  finally{button.disabled=false;}
 });
 onElement('cancelProductEdit','click',()=>document.getElementById('editProductOverlay').hidden=true);
-onElement('editProductForm','submit',async e=>{e.preventDefault();const status=document.getElementById('editProductStatus');const button=document.getElementById('saveProductChanges');button.disabled=true;status.className='status';status.textContent=currentLanguage==='en'?'Saving changes…':'جارٍ حفظ التعديلات…';try{const p=await invoke('update_product',{id:Number(document.getElementById('editId').value),code:document.getElementById('editCode').value.trim(),name:document.getElementById('editName').value.trim(),unit:document.getElementById('editUnit').value.trim(),barcode:document.getElementById('editBarcode').value.trim(),purchasePriceMinor:Math.round(Number(document.getElementById('editPurchase').value)*100),salePriceMinor:Math.round(Number(document.getElementById('editSale').value)*100)});status.className='status status-success';status.textContent=currentLanguage==='en'?`Product “${p.name}” saved. Primary barcode: ${p.barcode}. Previous barcode retained as an alternate when changed.`:`تم تعديل «${p.name}». الباركود الأساسي الحالي: ${p.barcode}. تم الحفاظ على الباركود السابق إذا تم تغييره.`;await refreshProducts();setTimeout(()=>{document.getElementById('editProductOverlay').hidden=true;},900);}catch(err){status.className='status status-error';const raw=String(err?.message||err);status.textContent=(currentLanguage==='en'?'Could not save product: ':'فشل حفظ التعديلات: ')+(currentLanguage==='en'?localizeText(raw):raw);console.error('[Madar] update_product failed:',err);}finally{button.disabled=false;}});
+onElement('editProductForm','submit',async e=>{e.preventDefault();const status=document.getElementById('editProductStatus');const button=document.getElementById('saveProductChanges');button.disabled=true;status.className='status';status.textContent=currentLanguage==='en'?'Saving changes…':'جارٍ حفظ التعديلات…';try{const p=await invoke('update_product',{id:Number(document.getElementById('editId').value),code:document.getElementById('editCode').value.trim(),name:document.getElementById('editName').value.trim(),unit:document.getElementById('editUnit').value.trim(),barcode:document.getElementById('editBarcode').value.trim(),purchasePriceMinor:Math.round(Number(document.getElementById('editPurchase').value)*100),salePriceMinor:Math.round(Number(document.getElementById('editSale').value)*100),minimumQuantityMilli:Math.round(Number(document.getElementById('editMinimumQuantity').value)*1000)});status.className='status status-success';status.textContent=currentLanguage==='en'?`Product “${p.name}” saved. Primary barcode: ${p.barcode}. Previous barcode retained as an alternate when changed.`:`تم تعديل «${p.name}». الباركود الأساسي الحالي: ${p.barcode}. تم الحفاظ على الباركود السابق إذا تم تغييره.`;await refreshProducts();setTimeout(()=>{document.getElementById('editProductOverlay').hidden=true;},900);}catch(err){status.className='status status-error';const raw=String(err?.message||err);status.textContent=(currentLanguage==='en'?'Could not save product: ':'فشل حفظ التعديلات: ')+(currentLanguage==='en'?localizeText(raw):raw);console.error('[Madar] update_product failed:',err);}finally{button.disabled=false;}});
 // Clipboard paste is handled by the custom context menu and Rust clipboard bridge.
 ['barcode','editBarcode','alternateBarcodeValue','invoiceBarcodeScan'].forEach(id=>{const field=document.getElementById(id);if(field)field.maxLength=128;});
 window.addEventListener('error',event=>{console.error('[Madar renderer error]',event.message,event.filename,event.lineno,event.error);});
@@ -369,8 +375,11 @@ const quantityText=n=>Math.abs(Number(n||0)/1000).toLocaleString(currentLanguage
 const quantityBalanceText=n=>(Number(n||0)/1000).toLocaleString(currentLanguage==='en'?'en-US':'ar-EG',{maximumFractionDigits:3});
 function renderStockBalances(rows){
  const body=document.getElementById('stockBalances');
- body.innerHTML=rows.map(p=>`<tr><td>${escapeHtml(p.code)}</td><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.unit)}</td><td><code>${escapeHtml(p.barcode)}</code></td><td>${quantityBalanceText(p.quantity_milli)}</td><td>${p.is_active?'نشط':'موقوف'}</td></tr>`).join('')||'<tr><td colspan="6" class="muted">لا توجد أصناف تطابق البحث.</td></tr>';
+ body.innerHTML=rows.map(p=>`<tr><td>${escapeHtml(p.code)}</td><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.unit)}</td><td><code>${escapeHtml(p.barcode)}</code></td><td>${quantityBalanceText(p.quantity_milli)}</td><td>${quantityBalanceText(p.minimum_quantity_milli)}${p.is_active&&Number(p.minimum_quantity_milli)>0&&Number(p.quantity_milli)<=Number(p.minimum_quantity_milli)?' <strong class=\"stock-low-badge\">منخفض</strong>':''}</td><td>${p.is_active?'نشط':'موقوف'}</td></tr>`).join('')||'<tr><td colspan="7" class="muted">لا توجد أصناف تطابق البحث.</td></tr>';
  const activeWithStock=stockRowsCache.filter(p=>p.is_active&&Number(p.quantity_milli)>0).length;
+ const low=stockRowsCache.filter(p=>p.is_active&&Number(p.minimum_quantity_milli)>0&&Number(p.quantity_milli)<=Number(p.minimum_quantity_milli));
+ const lowStatus=document.getElementById('lowStockStatus');if(lowStatus)lowStatus.textContent=low.length?`تنبيه: ${low.length} صنف وصل إلى حد التنبيه أو أقل.`:'لا توجد أصناف نشطة وصلت إلى حد التنبيه.';
+ const lowBody=document.getElementById('lowStockRows');if(lowBody)lowBody.innerHTML=low.map(p=>`<tr><td>${escapeHtml(p.code)}</td><td>${escapeHtml(p.name)}</td><td>${quantityBalanceText(p.quantity_milli)} ${escapeHtml(p.unit)}</td><td>${quantityBalanceText(p.minimum_quantity_milli)} ${escapeHtml(p.unit)}</td></tr>`).join('')||'<tr><td colspan="4" class="muted">لا توجد أصناف منخفضة المخزون.</td></tr>';
  const stat=document.getElementById('dashboardInStockProducts');
  if(stat)stat.textContent=activeWithStock.toLocaleString(currentLanguage==='en'?'en-US':'ar-EG');
 }
