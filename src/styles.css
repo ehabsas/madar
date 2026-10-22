@@ -139,3 +139,12 @@ img, svg, canvas { max-width: 100%; }
 }
 
 .browser-mode-banner{position:relative;z-index:200;background:#fff4d6;color:#6e4b00;border-bottom:1px solid #edcf83;padding:9px 14px;text-align:center;font-size:13px;line-height:1.5}
+
+/* Print preview: every printable commercial document is reviewed before opening the system print dialog. */
+.print-preview-overlay{z-index:20010;padding:12px;}
+.print-preview-box{width:min(1180px,100%);height:min(94vh,1100px);max-height:calc(100vh - 24px);display:flex;flex-direction:column;overflow:hidden;padding:18px;}
+.print-preview-heading h3{margin:0 0 4px;}
+.print-preview-heading p{margin:0 0 10px;}
+#printPreviewFrame{width:100%;flex:1;min-height:220px;border:1px solid var(--border);border-radius:8px;background:white;}
+.print-preview-box .confirm-actions{margin-top:12px;}
+@media(max-width:700px){.print-preview-overlay{padding:6px}.print-preview-box{height:calc(100vh - 12px);padding:10px}.print-preview-box .confirm-actions .btn{flex:1}}
