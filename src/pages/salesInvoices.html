@@ -1,0 +1,7 @@
+<section class="page" data-page-content="salesInvoices" data-permission="sales.view" hidden>
+ <div class="page-title"><h2>فواتير المبيعات</h2><p>أنشئ فاتورة بيع، وراجعها قبل الاعتماد. يعتمد مدار الفاتورة فقط إذا كانت أرصدة المخزون كافية.</p></div>
+ <section class="panel"><div class="product-toolbar"><div><h2>سجل فواتير المبيعات</h2><p class="muted">اختيار العميل اختياري للبيع النقدي. اعتماد الفاتورة يخصم الكميات المتاحة.</p></div><div class="actions product-toolbar-actions" style="margin:0"><button class="btn" id="openNewSaleInvoice" data-permission="sales.create" type="button">＋ فاتورة مبيعات جديدة</button><button class="btn secondary" id="refreshSalesBtn" type="button">تحديث</button></div></div>
+  <label class="field">بحث<input id="saleInvoiceSearch" type="search" placeholder="رقم الفاتورة أو اسم العميل أو الملاحظات"/></label><div id="saleInvoiceStatus" class="status muted" role="status" aria-live="polite"></div>
+  <div class="tablewrap"><table><thead><tr><th>رقم الفاتورة</th><th>التاريخ</th><th>العميل</th><th>الأصناف</th><th>الإجمالي</th><th>الحالة</th><th>أنشأها</th><th>الإجراءات</th></tr></thead><tbody id="saleInvoicesTable"><tr><td colspan="8" class="muted">جارٍ تحميل الفواتير...</td></tr></tbody></table></div>
+ </section>
+</section>

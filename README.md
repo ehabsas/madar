@@ -74,3 +74,27 @@ cargo tauri dev
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — حالة المراحل والخطوات المتبقية.
 - [`docs/BARCODE-MIGRATION.md`](docs/BARCODE-MIGRATION.md) — قواعد الباركود وترحيله.
 - [`docs/PHASES-1-3-ACCEPTANCE.md`](docs/PHASES-1-3-ACCEPTANCE.md) — اختبارات قبول العملاء والموردين والمشتريات والمبيعات.
+
+
+## Frontend structure and browser preview
+
+- `src/index.html`: page structure and asset references.
+- `src/styles.css`: shared responsive styling for phone, tablet and desktop.
+- `src/app.js`: UI behavior.
+- `src/browser-api.js`: selects native Tauri commands on desktop or a clearly labeled localStorage demo adapter in a normal browser.
+- `src-tauri/src/lib.rs`: shared backend setup, database helpers, app state and command registration.
+- `src-tauri/src/*_commands.rs`: command handlers grouped by domain (authentication, products, inventory, parties, finance and backups).
+
+### Browser preview
+
+Open `src/index.html` in a browser or serve the `src` directory with a local static server. The browser adapter supports demo authentication and basic product management in localStorage. It is **not** a production replacement for the SQLite/Tauri backend: financial documents, stock movements, user administration, file dialogs and backup/restore still require the desktop app. Do not use browser demo data as business records. Browser data can be cleared by clearing this site's storage.
+
+For local serving, from the project root run `python -m http.server 4173 --directory src`, then open `http://localhost:4173`.
+
+## Lazy-loaded page architecture
+
+The desktop UI uses a persistent shell in `src/index.html`, shared runtime code in `src/app.js`, and a page loader in `src/pages-loader.js`. Only the dashboard template is requested during startup. Other page templates are fetched when selected and their DOM nodes are cached to preserve form state when navigating away and back.
+
+Each page has a matching set of files under `src/pages/`: `<page>.html`, `<page>.js`, and `<page>.css`. Page JavaScript modules are loaded once on first visit and expose a `mount()` hook through `window.MadarPageModules`; page-specific CSS is linked on demand and remains scoped to its page root. Shared styling stays in `src/styles.css` to avoid duplicating common components. `onElement()` queues listeners for controls belonging to templates that have not been loaded yet and binds them when the relevant page enters the DOM.
+
+This organization keeps Tauri commands and shared application services in the shared runtime while moving template delivery and page initialization to an on-demand lifecycle.

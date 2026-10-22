@@ -1,0 +1,10 @@
+<section class="page" data-page-content="parties" data-any-permission="customers.view suppliers.view" hidden>
+ <div class="page-title"><h2>العملاء والموردون</h2><p>إدارة بيانات الاتصال، والعناوين، والملاحظات. إيقاف السجل لا يحذف تاريخه أو الفواتير المرتبطة به.</p></div>
+ <section class="panel">
+  <div class="product-toolbar"><div><h2 id="partiesSectionTitle">العملاء</h2><p class="muted">ابحث بالكود أو الاسم أو البريد الإلكتروني أو رقم الهاتف.</p></div><div class="actions product-toolbar-actions" style="margin:0"><button id="addPartyBtn" class="btn" type="button">＋ إضافة عميل</button><button id="refreshPartiesBtn" class="btn secondary" type="button">تحديث القائمة</button></div></div>
+  <div class="actions" style="margin-top:0"><button id="customersTab" class="btn" data-permission="customers.view" type="button">العملاء</button><button id="suppliersTab" class="btn secondary" data-permission="suppliers.view" type="button">الموردون</button></div>
+  <label class="field">بحث<input id="partySearch" type="search" placeholder="كود أو اسم أو بريد أو هاتف" autocomplete="off"/></label>
+  <div id="partiesStatus" class="status muted" role="status" aria-live="polite"></div>
+  <div class="tablewrap"><table><thead><tr><th>الكود</th><th>الاسم</th><th>البريد الإلكتروني</th><th>رقم الهاتف</th><th>العنوان</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody id="partiesTable"><tr><td colspan="7" class="muted">جارٍ تحميل السجلات...</td></tr></tbody></table></div>
+ </section>
+</section>

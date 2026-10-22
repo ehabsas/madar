@@ -1,0 +1,25 @@
+<section class="page" data-page-content="stock" data-permission="stock.view" hidden>
+ <div class="page-title"><h2>المخزون</h2><p>متابعة أرصدة الأصناف وسجل حركات الوارد والمنصرف. كل حركة تُحفظ في سجل مستقل، والرصيد محسوب من الحركات.</p></div>
+ <section class="panel">
+  <div class="product-toolbar"><div><h2>أرصدة الأصناف</h2><p class="muted">يعرض الرصيد الحالي لكل صنف، بما في ذلك الأصناف الموقوفة حتى لا تضيع أرصدتها من العرض.</p></div><div class="actions product-toolbar-actions" style="margin:0"><button class="btn secondary" id="refreshStockBtn" type="button">تحديث المخزون</button></div></div>
+  <label class="field">بحث بالاسم أو الكود أو الباركود<input id="stockSearch" type="search" placeholder="امسح باركودًا أو اكتب اسم الصنف / الكود" autocomplete="off"/></label>
+  <div class="tablewrap"><table><thead><tr><th>الكود</th><th>الصنف</th><th>الوحدة</th><th>الباركود الأساسي</th><th>الرصيد الحالي</th><th>الحالة</th></tr></thead><tbody id="stockBalances"><tr><td colspan="6" class="muted">جارٍ تحميل أرصدة المخزون...</td></tr></tbody></table></div>
+  <div id="stockListStatus" class="status muted" role="status" aria-live="polite"></div>
+ </section>
+ <section class="panel" data-permission="stock.movement.record">
+  <h2>تسجيل حركة مخزون</h2><p class="muted">استخدم «وارد» لإضافة كمية إلى الرصيد، و«منصرف» لصرف كمية موجودة. يمنع مدار صرف كمية أكبر من الرصيد المتاح، ولا يسمح بتسجيل حركة لصنف موقوف. تُحفظ وحدة القياس مع كل حركة؛ ولا يمكن تغيير وحدة صنف له رصيد حالي حتى لا تتغير دلالة الكميات.</p>
+  <form id="stockMovementForm">
+   <div class="grid">
+    <label class="field">نوع الحركة<select id="stockMovementDirection" required><option value="in">وارد — إضافة للمخزون</option><option value="out">منصرف — صرف من المخزون</option></select></label>
+    <label class="field">باركود أو كود الصنف<input id="stockScanner" placeholder="امسح الباركود ثم اضغط Enter" autocomplete="off"/></label>
+    <label class="field">الصنف<select id="stockMovementProduct" required><option value="">جارٍ تحميل الأصناف...</option></select></label>
+    <label class="field">الكمية<input id="stockMovementQuantity" type="number" min="0.001" step="0.001" required placeholder="مثال: 12 أو 1.250"/></label>
+    <label class="field">ملاحظات (اختياري)<input id="stockMovementNotes" maxlength="500" placeholder="مثال: رصيد افتتاحي أو توريد فاتورة رقم..."/></label>
+   </div>
+   <p id="stockAvailableBalance" class="muted">اختر صنفًا لعرض رصيده الحالي.</p>
+   <div class="actions"><button class="btn" id="saveStockMovement" type="submit">تسجيل الحركة</button><button class="btn secondary" id="clearStockMovement" type="button">مسح الحقول</button></div>
+   <div id="stockMovementStatus" class="status muted" role="status" aria-live="polite"></div>
+  </form>
+ </section>
+ <section class="panel"><h2>سجل حركات المخزون</h2><p class="muted">آخر 100 حركة مسجلة. الإشارة الموجبة تعني واردًا، والسالبة تعني منصرفًا.</p><div class="tablewrap"><table><thead><tr><th>التاريخ</th><th>الكود</th><th>الصنف</th><th>الحركة</th><th>الكمية</th><th>الوحدة</th><th>ملاحظات</th></tr></thead><tbody id="stockMovements"><tr><td colspan="7" class="muted">جارٍ تحميل سجل الحركات...</td></tr></tbody></table></div></section>
+</section>

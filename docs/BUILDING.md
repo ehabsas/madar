@@ -168,3 +168,8 @@ cargo install tauri-cli --locked
 - AppImage: https://tauri.app/distribute/appimage/
 - RPM: https://v2.tauri.app/distribute/rpm/
 - AUR: https://v2.tauri.app/distribute/aur/
+
+
+## Browser preview (not production mode)
+
+From the repository root run `python -m http.server 4173 --directory src` and open `http://localhost:4173`. The static browser preview stores demo users and products in that browser's localStorage. It does not access the desktop SQLite database and does not support production invoices, inventory movements, file dialogs or backups. Use Tauri for real business records.

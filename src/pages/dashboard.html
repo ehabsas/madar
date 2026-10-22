@@ -1,0 +1,27 @@
+<section class="page" data-page-content="dashboard">
+ <div class="page-title"><h2>لوحة التحكم</h2><p>ملخص سريع لأهم مؤشرات العمل واختصارات حسب صلاحيات حسابك.</p></div>
+ <div class="stats-grid dashboard-grid" id="dashboardMetricCards">
+  <article class="stat-card" data-permission="products.view"><span class="stat-icon" aria-hidden="true">📦</span><div class="stat-label">الأصناف المسجلة</div><div class="stat-value" id="dashboardProductCount">—</div><div class="muted">إجمالي الأصناف النشطة</div></article>
+  <article class="stat-card" data-permission="stock.view"><span class="stat-icon" aria-hidden="true">🏬</span><div class="stat-label">أصناف لها رصيد بالمخزون</div><div class="stat-value" id="dashboardInStockProducts">—</div><div class="muted">أصناف برصيد أكبر من صفر</div></article>
+  <article class="stat-card" data-permission="reports.view"><span class="stat-icon" aria-hidden="true">⚠️</span><div class="stat-label">أصناف منخفضة المخزون</div><div class="stat-value" id="dashboardLowStockProducts">—</div><div class="muted">تحتاج مراجعة وإعادة طلب</div></article>
+  <article class="stat-card" data-permission="reports.view"><span class="stat-icon" aria-hidden="true">🧾</span><div class="stat-label">مبيعات الشهر</div><div class="stat-value" id="dashboardSalesMonthly">—</div><div class="muted">الفواتير المعتمدة من أول الشهر</div></article>
+  <article class="stat-card" data-permission="reports.view"><span class="stat-icon" aria-hidden="true">🛒</span><div class="stat-label">مشتريات الشهر</div><div class="stat-value" id="dashboardPurchasesMonthly">—</div><div class="muted">الفواتير المعتمدة من أول الشهر</div></article>
+  <article class="stat-card" data-permission="reports.view"><span class="stat-icon" aria-hidden="true">👥</span><div class="stat-label">مستحقات العملاء</div><div class="stat-value" id="dashboardOutstandingSales">—</div><div class="muted">أرصدة فواتير المبيعات</div></article>
+  <article class="stat-card" data-permission="reports.view"><span class="stat-icon" aria-hidden="true">💼</span><div class="stat-label">مستحقات الموردين</div><div class="stat-value" id="dashboardOutstandingPurchases">—</div><div class="muted">أرصدة فواتير المشتريات</div></article>
+  <article class="stat-card" data-permission="quotations.view"><span class="stat-icon" aria-hidden="true">🏷️</span><div class="stat-label">عروض الأسعار المفتوحة</div><div class="stat-value" id="dashboardOpenQuotations">—</div><div class="muted">بانتظار المتابعة</div></article>
+ </div>
+ <section class="panel"><div class="product-toolbar"><div><h2>اختصارات سريعة</h2><p class="muted">تظهر الأقسام المتاحة حسب صلاحيات المستخدم.</p></div><span class="pill" id="dashboardUserRole">الدور الحالي</span></div>
+  <div class="dashboard-shortcuts">
+   <button class="dashboard-shortcut" type="button" data-go-page="products" data-permission="products.view"><span class="shortcut-icon">📦</span><span class="shortcut-copy"><strong>المنتجات</strong><small>الأصناف والباركودات</small></span></button>
+   <button class="dashboard-shortcut" type="button" data-go-page="stock" data-permission="stock.view"><span class="shortcut-icon">🏬</span><span class="shortcut-copy"><strong>المخزون</strong><small>الأرصدة والوارد والمنصرف</small></span></button>
+   <button class="dashboard-shortcut" type="button" data-go-page="parties" data-any-permission="customers.view suppliers.view"><span class="shortcut-icon">👥</span><span class="shortcut-copy"><strong>العملاء والموردون</strong><small>جهات الاتصال والحسابات</small></span></button>
+   <button class="dashboard-shortcut" type="button" data-go-page="salesInvoices" data-permission="sales.view"><span class="shortcut-icon">🧾</span><span class="shortcut-copy"><strong>فواتير المبيعات</strong><small>إنشاء ومتابعة الفواتير</small></span></button>
+   <button class="dashboard-shortcut" type="button" data-go-page="purchaseInvoices" data-permission="purchases.view"><span class="shortcut-icon">🛒</span><span class="shortcut-copy"><strong>فواتير المشتريات</strong><small>التوريد وإضافة المخزون</small></span></button>
+   <button class="dashboard-shortcut" type="button" data-go-page="quotations" data-permission="quotations.view"><span class="shortcut-icon">🏷️</span><span class="shortcut-copy"><strong>عروض الأسعار</strong><small>إنشاء العروض ومتابعتها</small></span></button>
+   <button class="dashboard-shortcut" type="button" data-go-page="finance" data-permission="finance.view"><span class="shortcut-icon">💳</span><span class="shortcut-copy"><strong>المدفوعات والخزنة</strong><small>التحصيلات والمستحقات</small></span></button>
+   <button class="dashboard-shortcut" type="button" data-go-page="reports" data-permission="reports.view"><span class="shortcut-icon">📈</span><span class="shortcut-copy"><strong>التقارير</strong><small>ملخص مالي وحركة العمل</small></span></button>
+   <button class="dashboard-shortcut" type="button" data-go-page="backup" data-any-permission="backup.view_points backup.create backup.restore backup.points.delete"><span class="shortcut-icon">💾</span><span class="shortcut-copy"><strong>النسخ الاحتياطي</strong><small>حماية واستعادة البيانات</small></span></button>
+  </div>
+ </section>
+ <section class="panel"><div class="product-toolbar"><div><h2>حالة النظام</h2><p class="muted">قاعدة البيانات محلية، ويتم التحقق من الصلاحيات داخل أوامر التطبيق. أنشئ نسخة احتياطية بصورة دورية.</p></div><span class="pill"><span aria-hidden="true">🟢</span> قاعدة بيانات محلية</span></div></section>
+</section>

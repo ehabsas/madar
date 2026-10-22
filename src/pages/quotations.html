@@ -1,0 +1,7 @@
+<section class="page" data-page-content="quotations" data-permission="quotations.view" hidden>
+ <div class="page-title"><h2>عروض الأسعار</h2><p>أنشئ عرض سعر للعميل واطبعه، ثم حدّث حالته أو حوّله إلى مسودة فاتورة مبيعات بعد قبوله.</p></div>
+ <section class="panel"><div class="product-toolbar"><div><h2>سجل عروض الأسعار</h2><p class="muted">عرض السعر لا يغيّر المخزون ولا ينشئ مستحقًا ماليًا حتى تحويله إلى فاتورة.</p></div><div class="actions product-toolbar-actions" style="margin:0"><button class="btn" id="newQuotationBtn" data-permission="quotations.create" type="button">＋ عرض سعر جديد</button><button class="btn secondary" id="refreshQuotationsBtn" type="button">تحديث</button></div></div>
+  <label class="field">بحث<input id="quotationSearch" type="search" placeholder="رقم العرض أو اسم العميل أو الملاحظات"/></label><div id="quotationsStatus" class="status" role="status" aria-live="polite"></div>
+  <div class="tablewrap"><table><thead><tr><th>رقم العرض</th><th>التاريخ</th><th>صالح حتى</th><th>العميل</th><th>الأصناف</th><th>الإجمالي</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody id="quotationsTable"><tr><td colspan="8" class="muted">جارٍ تحميل عروض الأسعار...</td></tr></tbody></table></div>
+ </section>
+</section>

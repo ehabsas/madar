@@ -1,0 +1,7 @@
+<section class="page" data-page-content="purchaseInvoices" data-permission="purchases.view" hidden>
+ <div class="page-title"><h2>فواتير المشتريات</h2><p>احفظ الفاتورة كمسودة، ثم اعتمدها عند المراجعة. الاعتماد يضيف الكميات للمخزون داخل معاملة واحدة.</p></div>
+ <section class="panel"><div class="product-toolbar"><div><h2>سجل فواتير المشتريات</h2><p class="muted">لا يتغير المخزون بمجرد إنشاء المسودة؛ يتم تحديثه فقط عند الاعتماد.</p></div><div class="actions product-toolbar-actions" style="margin:0"><button class="btn" id="openNewPurchaseInvoice" data-permission="purchases.create" type="button">＋ فاتورة مشتريات جديدة</button><button class="btn secondary" id="refreshPurchasesBtn" type="button">تحديث</button></div></div>
+  <label class="field">بحث<input id="purchaseInvoiceSearch" type="search" placeholder="رقم الفاتورة أو اسم المورد أو الملاحظات"/></label><div id="purchaseInvoiceStatus" class="status muted" role="status" aria-live="polite"></div>
+  <div class="tablewrap"><table><thead><tr><th>رقم الفاتورة</th><th>التاريخ</th><th>المورد</th><th>الأصناف</th><th>الإجمالي</th><th>الحالة</th><th>أنشأها</th><th>الإجراءات</th></tr></thead><tbody id="purchaseInvoicesTable"><tr><td colspan="8" class="muted">جارٍ تحميل الفواتير...</td></tr></tbody></table></div>
+ </section>
+</section>
