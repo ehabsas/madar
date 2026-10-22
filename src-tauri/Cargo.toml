@@ -1,8 +1,9 @@
 [package]
 name = "madar"
 version = "0.1.0"
-description = "Sales, Inventory and Accounts Managemen"
-authors = ["Madar"]
+description = "مدار - نظام إدارة الأعمال"
+license = "GPL-3.0-only"
+authors = ["Madar contributors"]
 edition = "2021"
 
 [lib]
@@ -15,9 +16,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
-arboard = { version = "3.7.0", default-features = false, features = [
-    "wayland-data-control",
-] }
+arboard = { version = "3.7.0", default-features = false, features = ["wayland-data-control"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 argon2 = "0.5"
