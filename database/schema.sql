@@ -236,7 +236,7 @@ CREATE TABLE IF NOT EXISTS purchase_return_items (
 );
 CREATE TABLE IF NOT EXISTS product_batches (
  id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id), warehouse_id INTEGER NOT NULL REFERENCES warehouses(id),
- batch_no TEXT NOT NULL, received_date TEXT NOT NULL, expiry_date TEXT NOT NULL, quantity_milli INTEGER NOT NULL CHECK(quantity_milli>0),
+ batch_no TEXT NOT NULL, received_date TEXT NOT NULL, expiry_date TEXT NOT NULL, expiry_known INTEGER NOT NULL DEFAULT 1 CHECK(expiry_known IN (0,1)), quantity_milli INTEGER NOT NULL CHECK(quantity_milli>0),
  remaining_milli INTEGER NOT NULL CHECK(remaining_milli>=0), source_invoice_id INTEGER, notes TEXT,
  created_at TEXT NOT NULL DEFAULT(datetime('now')), UNIQUE(product_id,warehouse_id,batch_no,expiry_date)
 );
