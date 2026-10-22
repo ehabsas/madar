@@ -4,7 +4,7 @@
   const pageNames = [
     "dashboard", "products", "stock", "parties", "purchaseInvoices",
     "salesInvoices", "quotations", "finance", "reports", "companySettings",
-    "backup", "users", "audit", "help"
+    "backup", "users", "audit", "operations", "help"
   ];
   const knownPages = new Set(pageNames);
   const pageNodes = new Map();

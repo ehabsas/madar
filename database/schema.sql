@@ -210,3 +210,59 @@ CREATE TABLE IF NOT EXISTS cashbook_entries (
 CREATE INDEX IF NOT EXISTS idx_cashbook_date ON cashbook_entries(entry_date,id DESC);
 
 INSERT OR IGNORE INTO app_settings(key,value) VALUES ('company_name',''),('company_phone',''),('company_email',''),('company_address',''),('company_tax_number',''),('company_commercial_register',''),('company_website',''),('company_logo_data_url',''),('company_invoice_footer',''),('currency_code','EGP');
+
+-- Advanced operations: returns, batches, cash shifts and general ledger.
+CREATE TABLE IF NOT EXISTS sales_returns (
+ id INTEGER PRIMARY KEY, return_no TEXT NOT NULL UNIQUE, sale_id INTEGER NOT NULL REFERENCES sales(id),
+ return_date TEXT NOT NULL, total_minor INTEGER NOT NULL DEFAULT 0 CHECK(total_minor>=0), notes TEXT,
+ created_by INTEGER, created_by_username TEXT, created_at TEXT NOT NULL DEFAULT(datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS sales_return_items (
+ id INTEGER PRIMARY KEY, return_id INTEGER NOT NULL REFERENCES sales_returns(id) ON DELETE CASCADE,
+ sale_item_id INTEGER NOT NULL REFERENCES sale_items(id), product_id INTEGER NOT NULL REFERENCES products(id),
+ quantity_milli INTEGER NOT NULL CHECK(quantity_milli>0), unit_price_minor INTEGER NOT NULL CHECK(unit_price_minor>=0),
+ line_total_minor INTEGER NOT NULL CHECK(line_total_minor>=0)
+);
+CREATE TABLE IF NOT EXISTS purchase_returns (
+ id INTEGER PRIMARY KEY, return_no TEXT NOT NULL UNIQUE, purchase_invoice_id INTEGER NOT NULL REFERENCES purchase_invoices(id),
+ return_date TEXT NOT NULL, total_minor INTEGER NOT NULL DEFAULT 0 CHECK(total_minor>=0), notes TEXT,
+ created_by INTEGER, created_by_username TEXT, created_at TEXT NOT NULL DEFAULT(datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS purchase_return_items (
+ id INTEGER PRIMARY KEY, return_id INTEGER NOT NULL REFERENCES purchase_returns(id) ON DELETE CASCADE,
+ purchase_item_id INTEGER NOT NULL REFERENCES purchase_invoice_items(id), product_id INTEGER NOT NULL REFERENCES products(id),
+ quantity_milli INTEGER NOT NULL CHECK(quantity_milli>0), unit_price_minor INTEGER NOT NULL CHECK(unit_price_minor>=0),
+ line_total_minor INTEGER NOT NULL CHECK(line_total_minor>=0)
+);
+CREATE TABLE IF NOT EXISTS product_batches (
+ id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id), warehouse_id INTEGER NOT NULL REFERENCES warehouses(id),
+ batch_no TEXT NOT NULL, received_date TEXT NOT NULL, expiry_date TEXT NOT NULL, quantity_milli INTEGER NOT NULL CHECK(quantity_milli>0),
+ remaining_milli INTEGER NOT NULL CHECK(remaining_milli>=0), source_invoice_id INTEGER, notes TEXT,
+ created_at TEXT NOT NULL DEFAULT(datetime('now')), UNIQUE(product_id,warehouse_id,batch_no,expiry_date)
+);
+CREATE INDEX IF NOT EXISTS idx_batches_expiry ON product_batches(expiry_date,remaining_milli);
+CREATE TABLE IF NOT EXISTS cash_shifts (
+ id INTEGER PRIMARY KEY, opened_at TEXT NOT NULL DEFAULT(datetime('now')), closed_at TEXT,
+ opening_minor INTEGER NOT NULL CHECK(opening_minor>=0), expected_minor INTEGER, actual_minor INTEGER, difference_minor INTEGER,
+ opened_by INTEGER, opened_by_username TEXT, closed_by INTEGER, closed_by_username TEXT, notes TEXT,
+ status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','closed'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_one_open_cash_shift ON cash_shifts(status) WHERE status='open';
+CREATE TABLE IF NOT EXISTS gl_accounts (
+ id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+ account_type TEXT NOT NULL CHECK(account_type IN ('asset','liability','equity','revenue','expense')), is_active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS gl_journals (
+ id INTEGER PRIMARY KEY, entry_no TEXT NOT NULL UNIQUE, entry_date TEXT NOT NULL, description TEXT NOT NULL,
+ source_type TEXT, source_id INTEGER, posted INTEGER NOT NULL DEFAULT 1, created_by INTEGER, created_by_username TEXT,
+ created_at TEXT NOT NULL DEFAULT(datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS gl_journal_lines (
+ id INTEGER PRIMARY KEY, journal_id INTEGER NOT NULL REFERENCES gl_journals(id) ON DELETE CASCADE,
+ account_id INTEGER NOT NULL REFERENCES gl_accounts(id), debit_minor INTEGER NOT NULL DEFAULT 0 CHECK(debit_minor>=0),
+ credit_minor INTEGER NOT NULL DEFAULT 0 CHECK(credit_minor>=0), CHECK((debit_minor=0) != (credit_minor=0))
+);
+INSERT OR IGNORE INTO gl_accounts(code,name,account_type) VALUES
+ ('1000','النقدية والخزنة','asset'),('1100','العملاء','asset'),('1200','المخزون','asset'),
+ ('2000','الموردون','liability'),('3000','رأس المال','equity'),('4000','إيرادات المبيعات','revenue'),
+ ('5000','تكلفة البضاعة المباعة','expense'),('6000','المصروفات التشغيلية','expense');
