@@ -213,6 +213,9 @@ fn initialize_database(path: &PathBuf) -> Result<(), String> {
         conn.execute(&format!("UPDATE {table} SET updated_at=COALESCE(updated_at,created_at,datetime('now')) WHERE updated_at IS NULL OR trim(updated_at)=''"), []).map_err(|e| e.to_string())?;
     }
     for table in ["purchase_invoice_items", "sale_items"] {
+        if !table_has_column(&conn, table, "tax_minor")? {
+            conn.execute(&format!("ALTER TABLE {table} ADD COLUMN tax_minor INTEGER NOT NULL DEFAULT 0 CHECK (tax_minor >= 0)"), []).map_err(|e| e.to_string())?;
+        }
         if !table_has_column(&conn, table, "unit")? {
             conn.execute(&format!("ALTER TABLE {table} ADD COLUMN unit TEXT"), []).map_err(|e| e.to_string())?;
         }
@@ -925,6 +928,42 @@ fn read_company_tax_settings(conn: &Connection) -> Result<(i64,bool),String> {
     Ok((rate,inclusive))
 }
 
+fn allocate_proportionally(total: i64, weights: &[i64]) -> Result<Vec<i64>, String> {
+    if total < 0 || weights.iter().any(|w| *w < 0) { return Err("قيم التوزيع غير صالحة".into()); }
+    let sum: i128 = weights.iter().map(|w| *w as i128).sum();
+    if weights.is_empty() { return if total == 0 { Ok(Vec::new()) } else { Err("لا توجد بنود لتوزيع المبلغ".into()) }; }
+    if sum == 0 { if total == 0 { return Ok(vec![0; weights.len()]); } return Err("لا يمكن توزيع مبلغ على بنود قيمتها صفر".into()); }
+    let mut out = Vec::with_capacity(weights.len());
+    let mut assigned = 0_i64;
+    let mut last_positive = 0usize;
+    for (i, w) in weights.iter().enumerate() { if *w > 0 { last_positive = i; } }
+    for (i, w) in weights.iter().enumerate() {
+        if i == last_positive { out.push(total - assigned); }
+        else {
+            let share = ((total as i128) * (*w as i128) / sum).clamp(0, i64::MAX as i128) as i64;
+            assigned = assigned.checked_add(share).ok_or("مبلغ التوزيع أكبر من الحد")?;
+            out.push(share);
+        }
+    }
+    Ok(out)
+}
+
+fn persist_line_allocations(tx: &rusqlite::Transaction<'_>, ctx: InvoiceContext, invoice_id: i64, discount_minor: i64, tax_minor: i64) -> Result<(), String> {
+    let fk = if ctx.kind == "sale" { "sale_id" } else { "purchase_invoice_id" };
+    let mut stmt = tx.prepare(&format!("SELECT id,line_total_minor FROM {lines} WHERE {fk}=?1 ORDER BY id", lines=ctx.lines, fk=fk)).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([invoice_id], |r| Ok((r.get::<_,i64>(0)?, r.get::<_,i64>(1)?))).map_err(|e| e.to_string())?;
+    let rows = rows.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    drop(stmt);
+    let weights: Vec<i64> = rows.iter().map(|(_,v)| *v).collect();
+    let discounts = allocate_proportionally(discount_minor, &weights)?;
+    let net_weights: Vec<i64> = weights.iter().zip(discounts.iter()).map(|(w,d)| w.saturating_sub(*d)).collect();
+    let taxes = allocate_proportionally(tax_minor, &net_weights)?;
+    for (i, (line_id, _)) in rows.iter().enumerate() {
+        tx.execute(&format!("UPDATE {lines} SET discount_minor=?1,tax_minor=?2 WHERE id=?3", lines=ctx.lines), params![discounts[i], taxes[i], line_id]).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn calculate_document_tax(subtotal_minor: i64, discount_minor: i64, rate_bps: i64, prices_include_tax: bool) -> Result<(i64,i64),String> {
     if subtotal_minor < 0 || discount_minor < 0 || discount_minor > subtotal_minor { return Err("قيمة الإجمالي أو الخصم غير صالحة".into()); }
     if !(0..=10000).contains(&rate_bps) { return Err("نسبة الضريبة غير صالحة".into()); }
@@ -1082,7 +1121,8 @@ fn get_quotation_details(app:tauri::AppHandle,state:State<'_,AppState>,quotation
 #[tauri::command(rename_all="camelCase")]
 fn save_quotation(app:tauri::AppHandle,state:State<'_,AppState>,quotation_id:Option<i64>,customer_id:i64,quote_date:String,valid_until:Option<String>,discount_minor:i64,notes:Option<String>,items:Vec<InvoiceItemInput>)->Result<QuotationRow,String>{let permission=if quotation_id.is_some(){"quotations.edit"}else{"quotations.create"};let actor=require_permission(state.inner(),permission)?;if !actor.permissions.iter().any(|p|p=="quotations.view")||!actor.permissions.iter().any(|p|p=="customers.view")||!actor.permissions.iter().any(|p|p=="products.view"){return Err("تحتاج صلاحيات عرض عروض الأسعار والعملاء والأصناف".into());}if items.is_empty()||items.len()>200{return Err("عرض السعر يجب أن يحتوي من صنف واحد إلى 200 صنف".into());}if discount_minor<0{return Err("الخصم لا يمكن أن يكون سالبًا".into());}let notes=clean_optional_profile(notes,"الملاحظات",2000)?;let path=database_path(&app)?;initialize_database(&path)?;let mut conn=connect(&path)?;let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|e.to_string())?;let norm:Option<String>=tx.query_row("SELECT date(?1)",[quote_date.trim()],|r|r.get(0)).map_err(|e|e.to_string())?;if norm.as_deref()!=Some(quote_date.trim()){return Err("تاريخ العرض غير صحيح".into());}let valid=if let Some(v)=valid_until.as_deref().filter(|v|!v.trim().is_empty()){let d:Option<String>=tx.query_row("SELECT date(?1)",[v.trim()],|r|r.get(0)).map_err(|e|e.to_string())?;if d.as_deref()!=Some(v.trim()){return Err("تاريخ صلاحية العرض غير صحيح".into());}Some(v.trim().to_string())}else{None};let customer_ok:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM customers WHERE id=?1 AND is_active=1)",[customer_id],|r|Ok(r.get::<_,i64>(0)?!=0)).map_err(|e|e.to_string())?;if !customer_ok{return Err("العميل غير موجود أو موقوف".into());}
  let id=if let Some(id)=quotation_id{let status:Option<String>=tx.query_row("SELECT status FROM quotations WHERE id=?1",[id],|r|r.get(0)).optional().map_err(|e|e.to_string())?;if status.as_deref()!=Some("draft"){return Err("يمكن تعديل مسودات عروض الأسعار فقط".into());}tx.execute("UPDATE quotations SET customer_id=?1,quote_date=?2,valid_until=?3,discount_minor=?4,notes=?5,updated_at=datetime('now') WHERE id=?6",params![customer_id,quote_date.trim(),valid,discount_minor,notes,id]).map_err(|e|e.to_string())?;tx.execute("DELETE FROM quotation_items WHERE quotation_id=?1",[id]).map_err(|e|e.to_string())?;id}else{tx.execute("INSERT INTO quotations(quote_no,customer_id,quote_date,valid_until,discount_minor,notes,created_by,created_by_username) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",params![format!("TMP-Q-{}",SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e|e.to_string())?.as_nanos()),customer_id,quote_date.trim(),valid,discount_minor,notes,actor.id,actor.display_name]).map_err(|e|e.to_string())?;tx.last_insert_rowid()};if quotation_id.is_none(){tx.execute("UPDATE quotations SET quote_no=?1 WHERE id=?2",params![format!("QUO-{id:06}"),id]).map_err(|e|e.to_string())?;}
- let mut subtotal=0_i64;for item in &items{if item.quantity_milli<=0||item.unit_price_minor<0{return Err("راجع كمية وسعر كل صنف".into());}let p:Option<(String,String,i64)>=tx.query_row("SELECT unit,name,is_active FROM products WHERE id=?1",[item.product_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e|e.to_string())?;let Some((unit,name,active))=p else{return Err("صنف غير موجود".into());};if active==0{return Err(format!("الصنف {name} موقوف"));}let line=item.quantity_milli.checked_mul(item.unit_price_minor).and_then(|v|v.checked_add(500)).ok_or("قيمة السطر أكبر من الحد")?/1000;subtotal=subtotal.checked_add(line).ok_or("إجمالي العرض أكبر من الحد")?;tx.execute("INSERT INTO quotation_items(quotation_id,product_id,unit,quantity_milli,unit_price_minor,line_total_minor) VALUES (?1,?2,?3,?4,?5,?6)",params![id,item.product_id,unit,item.quantity_milli,item.unit_price_minor,line]).map_err(|e|e.to_string())?;}if discount_minor>subtotal{return Err("الخصم أكبر من إجمالي العرض".into());}let (tax_rate_bps,prices_include_tax)=read_company_tax_settings(&tx)?;let (tax_minor,total)=calculate_document_tax(subtotal,discount_minor,tax_rate_bps,prices_include_tax)?;tx.execute("UPDATE quotations SET subtotal_minor=?1,total_minor=?2,tax_rate_bps=?3,tax_minor=?4,prices_include_tax=?5,updated_at=datetime('now') WHERE id=?6",params![subtotal,total,tax_rate_bps,tax_minor,if prices_include_tax {1} else {0},id]).map_err(|e|e.to_string())?;write_audit(&tx,Some(&actor),if quotation_id.is_some(){"quotation_updated"}else{"quotation_created"},"quotation",Some(&id.to_string()),&format!("total_minor={total}; tax_minor={tax_minor}; tax_rate_bps={tax_rate_bps}"))?;tx.commit().map_err(|e|e.to_string())?;quotation_row(&conn,id)?.ok_or("تعذر تحميل عرض السعر بعد الحفظ".into())}
+ let mut subtotal=0_i64;for item in &items{if item.quantity_milli<=0||item.unit_price_minor<0{return Err("راجع كمية وسعر كل صنف".into());}let p:Option<(String,String,i64)>=tx.query_row("SELECT unit,name,is_active FROM products WHERE id=?1",[item.product_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e|e.to_string())?;let Some((unit,name,active))=p else{return Err("صنف غير موجود".into());};if active==0{return Err(format!("الصنف {name} موقوف"));}let line=item.quantity_milli.checked_mul(item.unit_price_minor).and_then(|v|v.checked_add(500)).ok_or("قيمة السطر أكبر من الحد")?/1000;subtotal=subtotal.checked_add(line).ok_or("إجمالي العرض أكبر من الحد")?;tx.execute("INSERT INTO quotation_items(quotation_id,product_id,unit,quantity_milli,unit_price_minor,line_total_minor) VALUES (?1,?2,?3,?4,?5,?6)",params![id,item.product_id,unit,item.quantity_milli,item.unit_price_minor,line]).map_err(|e|e.to_string())?;}if discount_minor>subtotal{return Err("الخصم أكبر من إجمالي العرض".into());}let (tax_rate_bps,prices_include_tax)=read_company_tax_settings(&tx)?;let (tax_minor,total)=calculate_document_tax(subtotal,discount_minor,tax_rate_bps,prices_include_tax)?;
+tx.execute("UPDATE quotations SET subtotal_minor=?1,total_minor=?2,tax_rate_bps=?3,tax_minor=?4,prices_include_tax=?5,updated_at=datetime('now') WHERE id=?6",params![subtotal,total,tax_rate_bps,tax_minor,if prices_include_tax {1} else {0},id]).map_err(|e|e.to_string())?;write_audit(&tx,Some(&actor),if quotation_id.is_some(){"quotation_updated"}else{"quotation_created"},"quotation",Some(&id.to_string()),&format!("total_minor={total}; tax_minor={tax_minor}; tax_rate_bps={tax_rate_bps}"))?;tx.commit().map_err(|e|e.to_string())?;quotation_row(&conn,id)?.ok_or("تعذر تحميل عرض السعر بعد الحفظ".into())}
 #[tauri::command(rename_all="camelCase")]
 fn set_quotation_status(app:tauri::AppHandle,state:State<'_,AppState>,quotation_id:i64,status:String)->Result<String,String>{let actor=require_permission(state.inner(),"quotations.status.manage")?;if !["sent","accepted","rejected","cancelled"].contains(&status.as_str()){return Err("حالة عرض السعر غير مسموحة".into());}let path=database_path(&app)?;initialize_database(&path)?;let mut conn=connect(&path)?;let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|e.to_string())?;let old:Option<(String,String)>=tx.query_row("SELECT quote_no,status FROM quotations WHERE id=?1",[quotation_id],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(|e|e.to_string())?;let Some((number,current))=old else{return Err("عرض السعر غير موجود".into());};let allowed=match current.as_str(){"draft"=>["sent","accepted","rejected","cancelled"].contains(&status.as_str()),"sent"=>["accepted","rejected","cancelled"].contains(&status.as_str()),"accepted"=>["cancelled"].contains(&status.as_str()),_=>false};if !allowed{return Err("لا يمكن الانتقال من الحالة الحالية إلى الحالة المطلوبة".into());}tx.execute("UPDATE quotations SET status=?1,updated_at=datetime('now') WHERE id=?2",params![status,quotation_id]).map_err(|e|e.to_string())?;write_audit(&tx,Some(&actor),"quotation_status_changed","quotation",Some(&quotation_id.to_string()),&format!("quote_no={number}; from={current}; to={status}"))?;tx.commit().map_err(|e|e.to_string())?;Ok(format!("تم تحديث حالة عرض السعر {number}"))}
 #[tauri::command(rename_all="camelCase")]
@@ -1197,6 +1237,7 @@ fn create_invoice(app: tauri::AppHandle, state: State<'_, AppState>, invoice_typ
     if discount_minor>subtotal {return Err("خصم الفاتورة لا يمكن أن يتجاوز الإجمالي".into());}
     let (tax_rate_bps,prices_include_tax)=read_company_tax_settings(&tx)?;
     let (tax_minor,total)=calculate_document_tax(subtotal,discount_minor,tax_rate_bps,prices_include_tax)?;
+    persist_line_allocations(&tx,ctx,id,discount_minor,tax_minor)?;
     tx.execute(&format!("UPDATE {header} SET subtotal_minor=?1,total_minor=?2,tax_rate_bps=?3,tax_minor=?4,prices_include_tax=?5,updated_at=datetime('now') WHERE id=?6",header=ctx.header),params![subtotal,total,tax_rate_bps,tax_minor,if prices_include_tax {1} else {0},id]).map_err(|e|e.to_string())?;
     write_audit(&tx,Some(&actor),if ctx.kind=="purchase" {"purchase_invoice_created"} else {"sale_invoice_created"},if ctx.kind=="purchase" {"purchase_invoice"} else {"sale_invoice"},Some(&id.to_string()),&format!("invoice_no={invoice_no}; status=draft; items={}; total_minor={total}; tax_minor={tax_minor}; tax_rate_bps={tax_rate_bps}",items.len()))?;
     tx.commit().map_err(|e|e.to_string())?;
@@ -1251,6 +1292,7 @@ fn update_invoice_draft(app: tauri::AppHandle, state: State<'_, AppState>, invoi
     if discount_minor>subtotal {return Err("خصم الفاتورة لا يمكن أن يتجاوز الإجمالي".into());}
     let (tax_rate_bps,prices_include_tax)=read_company_tax_settings(&tx)?;
     let (tax_minor,total)=calculate_document_tax(subtotal,discount_minor,tax_rate_bps,prices_include_tax)?;
+    persist_line_allocations(&tx,ctx,invoice_id,discount_minor,tax_minor)?;
     let update=format!("UPDATE {header} SET {party_col}=?1,invoice_date=?2,subtotal_minor=?3,discount_minor=?4,total_minor=?5,tax_rate_bps=?6,tax_minor=?7,prices_include_tax=?8,notes=?9,updated_at=datetime('now') WHERE id=?10",header=ctx.header,party_col=ctx.party_column);
     tx.execute(&update,params![party_id,invoice_date.trim(),subtotal,discount_minor,total,tax_rate_bps,tax_minor,if prices_include_tax {1} else {0},notes,invoice_id]).map_err(|e|e.to_string())?;
     write_audit(&tx,Some(&actor),if ctx.kind=="purchase" {"purchase_invoice_updated"} else {"sale_invoice_updated"},if ctx.kind=="purchase" {"purchase_invoice"} else {"sale_invoice"},Some(&invoice_id.to_string()),&format!("invoice_no={invoice_no}; draft revised; items={}; total_minor={}; tax_minor={}; tax_rate_bps={tax_rate_bps}",items.len(),total,tax_minor))?;
@@ -1431,12 +1473,15 @@ fn create_return(app:tauri::AppHandle,state:State<'_,AppState>,invoice_type:Stri
  let insert= format!("INSERT INTO {ret_header}(return_no,{return_source_col},return_date,total_minor,notes,created_by,created_by_username) VALUES(?1,?2,?3,0,?4,?5,?6)");
  tx.execute(&insert,params![no,invoice_id,return_date,notes,actor.id,actor.username]).map_err(|e|e.to_string())?;let rid=tx.last_insert_rowid();let mut total=0i64;
  for item in &items {
-  let (product_id,source_line_total,unit_price,original_qty):(i64,i64,i64,i64)=tx.query_row(&format!("SELECT product_id,line_total_minor,unit_price_minor,quantity_milli FROM {lines} WHERE id=?1 AND {fk}=?2"),params![item.source_item_id,invoice_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|e|e.to_string())?.ok_or("أحد الأصناف لا يتبع الفاتورة المحددة")?;
+  let (product_id,source_line_total,source_discount,source_tax,unit_price,original_qty):(i64,i64,i64,i64,i64,i64)=tx.query_row(&format!("SELECT product_id,line_total_minor,discount_minor,tax_minor,unit_price_minor,quantity_milli FROM {lines} WHERE id=?1 AND {fk}=?2"),params![item.source_item_id,invoice_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional().map_err(|e|e.to_string())?.ok_or("أحد الأصناف لا يتبع الفاتورة المحددة")?;
   let returned:i64=tx.query_row(&format!("SELECT COALESCE(SUM(quantity_milli),0) FROM {ret_lines} WHERE {ret_fk}=?1"),[item.source_item_id],|r|r.get(0)).map_err(|e|e.to_string())?;
   if item.quantity_milli>original_qty-returned{return Err("كمية المرتجع أكبر من الكمية المتبقية من الفاتورة الأصلية".into());}
   // Pro-rate the persisted source line total by returned quantity, rounding half-up once.
   // This avoids double truncation from deriving a unit price and multiplying it back.
-  let line_total=if original_qty>0 { (((source_line_total as i128)*(item.quantity_milli as i128)+(original_qty as i128/2))/(original_qty as i128)).clamp(0,i64::MAX as i128) as i64 } else { 0 };
+  let gross_return=if original_qty>0 { (((source_line_total as i128)*(item.quantity_milli as i128)+(original_qty as i128/2))/(original_qty as i128)).clamp(0,i64::MAX as i128) as i64 } else { 0 };
+  let discount_return=if original_qty>0 { (((source_discount as i128)*(item.quantity_milli as i128)+(original_qty as i128/2))/(original_qty as i128)).clamp(0,gross_return as i128) as i64 } else { 0 };
+  let tax_return=if original_qty>0 { (((source_tax as i128)*(item.quantity_milli as i128)+(original_qty as i128/2))/(original_qty as i128)).clamp(0,i64::MAX as i128) as i64 } else { 0 };
+  let line_total=gross_return.saturating_sub(discount_return).saturating_add(if invoice_total==invoice_subtotal { 0 } else { tax_return });
   total=total.checked_add(line_total).ok_or("إجمالي المرتجع أكبر من الحد المسموح")?;
   tx.execute(&format!("INSERT INTO {ret_lines}(return_id,{ret_fk},product_id,quantity_milli,unit_price_minor,line_total_minor) VALUES(?1,?2,?3,?4,?5,?6)"),params![rid,item.source_item_id,product_id,item.quantity_milli,unit_price,line_total]).map_err(|e|e.to_string())?;
   let warehouse:i64=if let Some(w)=item.warehouse_id { let ok:i64=tx.query_row("SELECT COUNT(*) FROM warehouses WHERE id=?1 AND is_active=1",[w],|r|r.get(0)).map_err(|e|e.to_string())?; if ok==0{return Err("المخزن المحدد غير موجود أو غير نشط".into());} w } else { tx.query_row("SELECT id FROM warehouses WHERE code='MAIN' LIMIT 1",[],|r|r.get(0)).map_err(|e|e.to_string())? };
@@ -1463,9 +1508,9 @@ fn create_return(app:tauri::AppHandle,state:State<'_,AppState>,invoice_type:Stri
   }
  }
  // Allocate invoice-level discount/tax proportionally to the returned net line value.
- let adjusted_total=if invoice_subtotal>0 { ((total as i128)*(invoice_total as i128)/(invoice_subtotal as i128)).clamp(0,i64::MAX as i128) as i64 } else { 0 };
+ let adjusted_total=total;
  tx.execute(&format!("UPDATE {ret_header} SET total_minor=?1 WHERE id=?2"),params![adjusted_total,rid]).map_err(|e|e.to_string())?;
- let (ret_date,party_id):(String,Option<i64>)=tx.query_row(&format!("SELECT return_date,{party_col} FROM {header} WHERE id=?1",header=header,party_col=if ctx.kind=="sale"{"customer_id"}else{"supplier_id"}),[invoice_id],|r|Ok((r.get(0)?,r.get(1)?))).map_err(|e|e.to_string())?;
+ let (ret_date,_party_id):(String,Option<i64>)=tx.query_row(&format!("SELECT return_date,{party_col} FROM {header} WHERE id=?1",header=header,party_col=if ctx.kind=="sale"{"customer_id"}else{"supplier_id"}),[invoice_id],|r|Ok((r.get(0)?,r.get(1)?))).map_err(|e|e.to_string())?;
  let return_tax=if invoice_total>0 { ((adjusted_total as i128)*(invoice_tax as i128)/(invoice_total as i128)).clamp(0,adjusted_total as i128) as i64 } else { 0 };
  let return_net=adjusted_total.saturating_sub(return_tax);
  if ctx.kind=="sale" {

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "madar",
+  "productName": "مدار",
   "version": "0.1.0",
   "identifier": "com.madar.business",
   "build": {
