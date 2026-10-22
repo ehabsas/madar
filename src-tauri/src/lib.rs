@@ -627,15 +627,43 @@ struct AuditRow { id: i64, action: String, entity_type: String, entity_id: Optio
 
 
 #[tauri::command(rename_all = "camelCase")]
-fn list_audit_log(app: tauri::AppHandle, state: State<'_, AppState>, query: Option<String>, entity_type: Option<String>, action: Option<String>) -> Result<Vec<AuditRow>, String> {
-    let _actor=require_permission(state.inner(),"audit.view")?;
-    let path=database_path(&app)?;initialize_database(&path)?;let conn=connect(&path)?;
-    let q=query.unwrap_or_default();let normalized_query=q.trim();let like=format!("%{}%",normalized_query);
-    let kind=entity_type.unwrap_or_default().trim().to_ascii_lowercase();
-    let act=action.unwrap_or_default().trim().to_ascii_lowercase();
-    let mut stmt=conn.prepare("SELECT id,action,entity_type,entity_id,details,actor_username,created_at FROM audit_log WHERE (?1='' OR action LIKE ?2 OR entity_type LIKE ?2 OR COALESCE(entity_id,'') LIKE ?2 OR COALESCE(details,'') LIKE ?2 OR COALESCE(actor_username,'') LIKE ?2) AND (?3='' OR (?3='stock' AND (lower(trim(entity_type))='stock' OR lower(trim(action)) IN ('stock_in','stock_out'))) OR (?3='product' AND lower(trim(entity_type))='product' AND lower(trim(action)) NOT IN ('stock_in','stock_out')) OR (?3 NOT IN ('stock','product') AND lower(trim(entity_type))=?3)) AND (?4='' OR lower(trim(action))=?4) ORDER BY id DESC LIMIT 500").map_err(|e|e.to_string())?;
-    let rows=stmt.query_map(params![normalized_query,like,kind,act],|r|Ok(AuditRow{id:r.get(0)?,action:r.get(1)?,entity_type:r.get(2)?,entity_id:r.get(3)?,details:r.get(4)?,actor_username:r.get(5)?,created_at:r.get(6)?})).map_err(|e|e.to_string())?;
-    rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+fn list_audit_log(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    query: Option<String>,
+    entity_type: Option<String>,
+    action: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<Vec<AuditRow>, String> {
+    let _actor = require_permission(state.inner(), "audit.view")?;
+    let path = database_path(&app)?;
+    initialize_database(&path)?;
+    let conn = connect(&path)?;
+    let q = query.unwrap_or_default();
+    let normalized_query = q.trim();
+    let like = format!("%{}%", normalized_query);
+    let kind = entity_type.unwrap_or_default().trim().to_ascii_lowercase();
+    let act = action.unwrap_or_default().trim().to_ascii_lowercase();
+    let page_size = limit.unwrap_or(50).clamp(1, 200);
+    let page_offset = offset.unwrap_or(0).max(0);
+    // Filtering is performed in SQLite BEFORE LIMIT/OFFSET, so search spans the
+    // entire audit history, not just the records already rendered in the UI.
+    let mut stmt = conn.prepare(
+        "SELECT id,action,entity_type,entity_id,details,actor_username,created_at
+         FROM audit_log
+         WHERE (?1='' OR action LIKE ?2 OR entity_type LIKE ?2 OR COALESCE(entity_id,'') LIKE ?2 OR COALESCE(details,'') LIKE ?2 OR COALESCE(actor_username,'') LIKE ?2)
+           AND (?3='' OR (?3='stock' AND (lower(trim(entity_type))='stock' OR lower(trim(action)) IN ('stock_in','stock_out'))) OR (?3='product' AND lower(trim(entity_type))='product' AND lower(trim(action)) NOT IN ('stock_in','stock_out')) OR (?3 NOT IN ('stock','product') AND lower(trim(entity_type))=?3))
+           AND (?4='' OR lower(trim(action))=?4)
+         ORDER BY id DESC LIMIT ?5 OFFSET ?6"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(params![normalized_query, like, kind, act, page_size, page_offset], |r| {
+        Ok(AuditRow {
+            id: r.get(0)?, action: r.get(1)?, entity_type: r.get(2)?,
+            entity_id: r.get(3)?, details: r.get(4)?, actor_username: r.get(5)?, created_at: r.get(6)?,
+        })
+    }).map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
 #[derive(Serialize)]

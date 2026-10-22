@@ -902,19 +902,36 @@ onElement('saveUserPermissions','click',async()=>{
 function auditEntityLabel(type){return ({product:'صنف',stock:'مخزون',user:'مستخدم',session:'جلسة',backup:'نسخة احتياطية',database:'قاعدة البيانات',customers:'عميل',suppliers:'مورد',purchase_invoice:'فاتورة مشتريات',sale_invoice:'فاتورة مبيعات',quotation:'عرض سعر',payment:'دفعة',cashbox:'الخزنة',company:'بيانات الشركة'})[type]||type;}
 function auditActionLabel(action){return ({initial_admin_created:'إنشاء مدير النظام',login:'تسجيل دخول ناجح',login_failed:'محاولة دخول فاشلة',logout:'تسجيل خروج',create:'إنشاء صنف',update:'تعديل صنف',deactivate:'إيقاف صنف',reactivate:'إعادة تفعيل صنف',add_alternate_barcode:'إضافة باركود بديل',stock_in:'وارد مخزون',stock_out:'منصرف مخزون',create_user:'إنشاء مستخدم',user_created:'إنشاء مستخدم',user_deactivated:'إيقاف حساب مستخدم',user_activated:'تفعيل حساب مستخدم',user_role_changed:'تغيير دور مستخدم',user_permissions_changed:'تخصيص صلاحيات مستخدم',user_profile_updated:'تعديل بيانات مستخدم',password_reset:'إعادة تعيين كلمة مرور',password_changed:'تغيير كلمة مرور',backup_created:'إنشاء نسخة احتياطية',restore_point_deleted:'حذف نقطة استعادة',backup_restored:'استعادة قاعدة البيانات',customer_created:'إضافة عميل',customer_updated:'تعديل عميل',customer_deactivated:'إيقاف عميل',customer_activated:'تفعيل عميل',supplier_created:'إضافة مورد',supplier_updated:'تعديل مورد',supplier_deactivated:'إيقاف مورد',supplier_activated:'تفعيل مورد',purchase_invoice_created:'إنشاء مسودة مشتريات',purchase_invoice_updated:'تعديل مسودة مشتريات',purchase_invoice_posted:'اعتماد مشتريات',purchase_invoice_cancelled:'إلغاء مشتريات',sale_invoice_created:'إنشاء مسودة مبيعات',sale_invoice_updated:'تعديل مسودة مبيعات',sale_invoice_posted:'اعتماد مبيعات',sale_invoice_cancelled:'إلغاء مبيعات',quotation_created:'إنشاء عرض سعر',quotation_updated:'تعديل عرض سعر',quotation_status_changed:'تغيير حالة عرض سعر',quotation_converted:'تحويل عرض سعر إلى فاتورة',payment_recorded:'تسجيل دفعة',cashbox_adjustment:'تسوية الخزنة',company_profile_updated:'تعديل بيانات الشركة'})[action]||action;}
 function localAuditDate(value){if(!value)return '';const parsed=new Date(value.replace(' ','T')+'Z');return Number.isNaN(parsed.getTime())?value:parsed.toLocaleString(currentLanguage==='en'?'en-GB':'ar-EG');}
-async function loadAuditLog(query){
- const status=document.getElementById('auditStatus');if(!currentUser?.permissions.includes('audit.view'))return;
+let auditOffset = 0;
+const AUDIT_PAGE_SIZE = 50;
+let auditRequestSequence = 0;
+async function loadAuditLog(query, append = false){
+ const status=document.getElementById('auditStatus');
  const search=document.getElementById('auditSearch');
+ const table=document.getElementById('auditTable');
+ if(!status||!search||!table||!currentUser?.permissions.includes('audit.view'))return;
  if(typeof query==='string')search.value=query;
  const term=search.value.trim();
  const entityType=document.getElementById('auditTypeFilter').value.trim();
  const action=document.getElementById('auditActionFilter').value.trim();
+ if(!append)auditOffset=0;
+ const requestOffset=append?auditOffset:0;
+ const requestSequence=++auditRequestSequence;
+ const moreButton=document.getElementById('loadMoreAuditBtn');
+ if(!append){table.innerHTML='<tr><td colspan="6" class="muted">جارٍ تحميل السجل...</td></tr>';if(moreButton)moreButton.hidden=true;}
+ if(moreButton)moreButton.disabled=true;
  try{
-  const rows=await invoke('list_audit_log',{query:term,entityType,action});
-  document.getElementById('auditTable').innerHTML=rows.map(row=>`<tr><td>${escapeHtml(localAuditDate(row.createdAt))}</td><td>${escapeHtml(row.actorUsername||'النظام/غير معروف')}</td><td>${escapeHtml(auditActionLabel(row.action))}</td><td>${escapeHtml(auditEntityLabel(row.entityType))}</td><td>${escapeHtml(row.entityId||'—')}</td><td>${escapeHtml(row.details||'')}</td></tr>`).join('')||'<tr><td colspan="6" class="muted">لا توجد عمليات مسجلة مطابقة للبحث.</td></tr>';
+  const rows=await invoke('list_audit_log',{query:term,entityType,action,limit:AUDIT_PAGE_SIZE,offset:requestOffset});
+  // Ignore stale responses when the user changes a filter while a request is in flight.
+  if(requestSequence!==auditRequestSequence)return;
+  const html=rows.map(row=>`<tr><td>${escapeHtml(localAuditDate(row.createdAt))}</td><td>${escapeHtml(row.actorUsername||'النظام/غير معروف')}</td><td>${escapeHtml(auditActionLabel(row.action))}</td><td>${escapeHtml(auditEntityLabel(row.entityType))}</td><td>${escapeHtml(row.entityId||'—')}</td><td>${escapeHtml(row.details||'')}</td></tr>`).join('');
+  if(append){table.insertAdjacentHTML('beforeend',html);}else{table.innerHTML=html;}
+  if(!append&&rows.length===0)table.innerHTML='<tr><td colspan="6" class="muted">لا توجد عمليات مسجلة مطابقة للبحث.</td></tr>';
+  auditOffset=requestOffset+rows.length;
+  if(moreButton){moreButton.hidden=rows.length<AUDIT_PAGE_SIZE;moreButton.disabled=false;}
   const activeFilters=[term,entityType,action].filter(Boolean).length;
-  status.textContent=`عدد السجلات المعروضة: ${rows.length}${activeFilters?` · المرشحات النشطة: ${activeFilters}`:''}`;
- }catch(err){status.textContent='تعذر تحميل سجل النشاط: '+err;}
+  status.textContent=`عدد السجلات المعروضة: ${auditOffset}${rows.length===AUDIT_PAGE_SIZE?' · توجد سجلات إضافية':''}${activeFilters?` · المرشحات النشطة: ${activeFilters}`:''}`;
+ }catch(err){if(requestSequence===auditRequestSequence){status.textContent='تعذر تحميل سجل النشاط: '+err;if(moreButton)moreButton.disabled=false;}}
 }
 async function finishLogin(user){
   currentUser=user;document.body.classList.remove('auth-locked');document.getElementById('authOverlay').hidden=true;renderHeaderUser(user);document.getElementById('logoutBtn').hidden=false;document.getElementById('changePasswordBtn').hidden=false;closeHeaderMenus();await loadHeaderBranding();
@@ -1023,6 +1040,7 @@ onElement('changePasswordBtn','click',()=>{closeHeaderMenus();document.getElemen
 onElement('cancelChangePassword','click',()=>document.getElementById('changePasswordOverlay').hidden=true);
 onElement('changeOwnPasswordForm','submit',async e=>{e.preventDefault();const button=document.getElementById('changeOwnPasswordSubmit');const status=document.getElementById('ownPasswordStatus');button.disabled=true;try{status.textContent=await invoke('change_own_password',{currentPassword:document.getElementById('ownCurrentPassword').value,newPassword:document.getElementById('ownNewPassword').value});document.getElementById('ownCurrentPassword').value='';document.getElementById('ownNewPassword').value='';}catch(err){status.textContent='تعذر تغيير كلمة المرور: '+err;}finally{button.disabled=false;}});
 onElement('refreshAuditBtn','click',()=>loadAuditLog());
+onElement('loadMoreAuditBtn','click',()=>loadAuditLog(undefined,true));
 onElement('resetAuditFilters','click',()=>{document.getElementById('auditSearch').value='';document.getElementById('auditTypeFilter').value='';document.getElementById('auditActionFilter').value='';loadAuditLog();});
 let auditSearchTimer;onElement('auditSearch','input',e=>{clearTimeout(auditSearchTimer);auditSearchTimer=setTimeout(()=>loadAuditLog(e.target.value),180);});
 onElement('auditTypeFilter','change',()=>loadAuditLog());

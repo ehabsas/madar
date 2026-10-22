@@ -1,2 +1,8 @@
 /* Loaded on demand with the audit template. */
-[data-page-content='audit'] .tablewrap{max-width:100%;overscroll-behavior-x:contain;}
+[data-page-content='audit'] .tablewrap{max-width:100%;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;}
+[data-page-content='audit'] .audit-table{width:max-content;min-width:100%;table-layout:auto;}
+[data-page-content='audit'] .audit-table th,
+[data-page-content='audit'] .audit-table td{white-space:nowrap;width:1%;}
+[data-page-content='audit'] .audit-table th:last-child,
+[data-page-content='audit'] .audit-table td:last-child{white-space:normal;min-width:260px;max-width:640px;overflow-wrap:anywhere;}
+[data-page-content='audit'] .audit-pagination{margin-top:12px;}
