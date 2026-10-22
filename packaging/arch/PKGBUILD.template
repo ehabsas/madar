@@ -1,0 +1,17 @@
+# This template is filled by scripts/build-arch.sh after compiling a local binary.
+# It intentionally does not point to an invented remote repository.
+pkgname=madar
+pkgver=REPLACE_WITH_CARGO_VERSION
+pkgrel=1
+pkgdesc='Madar business and inventory management'
+arch=('x86_64')
+depends=('webkit2gtk-4.1' 'gtk3' 'openssl' 'libappindicator-gtk3' 'librsvg')
+source=('madar' 'madar.desktop' 'madar.png' 'README.md')
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+package() {
+  install -Dm755 "$srcdir/madar" "$pkgdir/usr/bin/madar"
+  install -Dm644 "$srcdir/madar.desktop" "$pkgdir/usr/share/applications/madar.desktop"
+  install -Dm644 "$srcdir/madar.png" "$pkgdir/usr/share/icons/hicolor/128x128/apps/madar.png"
+  install -Dm644 "$srcdir/README.md" "$pkgdir/usr/share/doc/madar/README.md"
+}

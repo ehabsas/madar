@@ -1,0 +1,69 @@
+name: Build desktop installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows MSI and NSIS
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --locked
+      - name: Build installers
+        run: cargo tauri build --bundles msi,nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: madar-windows-x64
+          path: src-tauri/target/release/bundle/**
+          if-no-files-found: error
+          retention-days: 14
+
+  macos:
+    name: macOS app and DMG
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --locked
+      - name: Build app and DMG
+        run: cargo tauri build --bundles app,dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: madar-macos
+          path: src-tauri/target/release/bundle/**
+          if-no-files-found: error
+          retention-days: 14
+
+  ubuntu:
+    name: Ubuntu DEB and AppImage
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf libfuse2
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --locked
+      - name: Build packages
+        run: cargo tauri build --bundles deb,appimage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: madar-ubuntu-22.04-x64
+          path: src-tauri/target/release/bundle/**
+          if-no-files-found: error
+          retention-days: 14

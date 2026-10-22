@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Madar
+Name[ar]=مدار
+Comment=Business and inventory management
+Exec=madar
+Icon=madar
+Terminal=false
+Categories=Office;Finance;
+StartupWMClass=madar

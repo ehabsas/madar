@@ -102,6 +102,15 @@ html[dir="rtl"] .brand .mark:after{content:'م'}
 @media(max-width:1000px){.header-brand-cluster{gap:10px}.header-company-brand{max-width:28vw;padding-inline-start:10px}.header-company-name{max-width:170px}.user-trigger-text{max-width:100px}.user-trigger-name{max-width:100px}.header-actions{gap:6px}}
 @media(max-width:760px){header{align-items:flex-start;flex-wrap:wrap}.header-brand-cluster{width:100%;flex:1 1 100%;justify-content:space-between}.header-actions{width:100%;justify-content:flex-end}.header-company-brand{max-width:52vw}.header-company-name{max-width:210px}.dropdown-menu.user-menu{position:fixed;top:110px;inset-inline:12px;min-width:0}.dropdown-menu.pref-menu{position:fixed;top:110px;inset-inline:12px;min-width:0}.app-layout{margin-top:12px}}
 @media(max-width:460px){.header-company-brand{max-width:48vw}.header-company-logo-wrap{width:32px;height:32px;flex-basis:32px}.dropdown-trigger{padding:7px 9px}.user-trigger-text{max-width:90px}.user-trigger-name{max-width:90px}.brand h1{font-size:19px}.brand .mark{width:36px;height:36px}}
+
+/* App-owned text-edit menu: avoids WebKitGTK's native clipboard target enumeration. */
+#madarEditContextMenu{position:fixed;z-index:30050;min-width:174px;padding:6px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.24);display:grid;gap:3px;direction:inherit}
+#madarEditContextMenu[hidden]{display:none!important}
+#madarEditContextMenu button{display:flex;align-items:center;gap:12px;width:100%;text-align:start;border:0;background:transparent;color:var(--text);border-radius:6px;padding:9px 10px;font:inherit;cursor:pointer}
+#madarEditContextMenu button:hover:not(:disabled){background:var(--surface-soft)}
+#madarEditContextMenu button:disabled{opacity:.42;cursor:not-allowed}
+#madarEditContextMenu .edit-menu-shortcut{margin-inline-start:auto;color:var(--muted);font-size:11px;direction:ltr}
+#madarEditContextMenu .edit-menu-separator{height:1px;background:var(--border);margin:3px 5px}
 </style></head><body class="auth-locked">
 <header>
  <div class="header-brand-cluster">
@@ -364,15 +373,144 @@ html[dir="rtl"] .brand .mark:after{content:'م'}
   <div id="permissionEditorStatus" class="status muted" role="status" aria-live="polite"></div>
  </section>
 </div>
+
+<div id="madarEditContextMenu" role="menu" aria-label="Text editing" hidden>
+ <button type="button" role="menuitem" data-edit-action="cut"><span class="edit-menu-icon">✂</span><span data-edit-label="cut">قص</span><span class="edit-menu-shortcut">Ctrl+X</span></button>
+ <button type="button" role="menuitem" data-edit-action="copy"><span class="edit-menu-icon">▢</span><span data-edit-label="copy">نسخ</span><span class="edit-menu-shortcut">Ctrl+C</span></button>
+ <button type="button" role="menuitem" data-edit-action="paste"><span class="edit-menu-icon">▣</span><span data-edit-label="paste">لصق</span><span class="edit-menu-shortcut">Ctrl+V</span></button>
+ <div class="edit-menu-separator" aria-hidden="true"></div>
+ <button type="button" role="menuitem" data-edit-action="selectAll"><span class="edit-menu-icon">↔</span><span data-edit-label="selectAll">تحديد الكل</span><span class="edit-menu-shortcut">Ctrl+A</span></button>
+</div>
 <script>
-// Disable WebKitGTK's native right-click context menu. On Linux this menu
-// queries GTK clipboard targets to determine whether Paste is available; that
-// path matches the reported crash inside WebKit::Clipboard::formats when the
-// system clipboard is empty or reports no targets. Keyboard shortcuts remain
-// available.
-window.addEventListener('contextmenu', function(event) {
-  event.preventDefault();
-}, { capture: true });
+// Avoid WebKitGTK's native clipboard paths on Linux: this app owns copy/cut/paste
+// for text controls and suppresses the page context menu (including Inspect Element).
+const madarEditMenu=document.getElementById('madarEditContextMenu');
+let madarEditTarget=null;
+function getTextEditTarget(node){
+ const el=node instanceof Element?node.closest('input,textarea,[contenteditable="true"],[contenteditable=""]'):null;
+ if(!el||el.disabled)return null;
+ if(el instanceof HTMLInputElement && ['button','submit','reset','checkbox','radio','file','range','color','image','hidden'].includes((el.type||'text').toLowerCase()))return null;
+ return el;
+}
+function isEditableTarget(el){return !!el && !el.disabled && !el.readOnly && el.getAttribute('aria-disabled')!=='true';}
+function selectedTextForTarget(el){
+ if(!el)return '';
+ if(el instanceof HTMLInputElement||el instanceof HTMLTextAreaElement){
+  const start=el.selectionStart,end=el.selectionEnd;
+  return typeof start==='number'&&typeof end==='number'&&end>start?el.value.slice(start,end):'';
+ }
+ if(el.isContentEditable){const sel=window.getSelection();return sel?sel.toString():'';}
+ return '';
+}
+function refreshMadarEditMenuLabels(){
+ if(!madarEditMenu)return;
+ const en=currentLanguage==='en';
+ const labels=en?{cut:'Cut',copy:'Copy',paste:'Paste',selectAll:'Select all'}:{cut:'قص',copy:'نسخ',paste:'لصق',selectAll:'تحديد الكل'};
+ madarEditMenu.querySelectorAll('[data-edit-label]').forEach(node=>{node.textContent=labels[node.dataset.editLabel]||node.textContent;});
+ madarEditMenu.setAttribute('aria-label',en?'Text editing':'تحرير النص');
+ madarEditMenu.style.direction=en?'ltr':'rtl';
+ madarEditMenu.querySelectorAll('.edit-menu-shortcut').forEach(node=>{node.textContent=(navigator.platform||'').toLowerCase().includes('mac')?node.textContent.replace('Ctrl','⌘'):node.textContent.replace('⌘','Ctrl');});
+}
+function hideMadarEditMenu(){if(madarEditMenu)madarEditMenu.hidden=true;madarEditTarget=null;}
+function showMadarEditMenu(event,target){
+ madarEditTarget=target;refreshMadarEditMenuLabels();
+ const canEdit=isEditableTarget(target),hasSelection=selectedTextForTarget(target).length>0;
+ madarEditMenu.querySelector('[data-edit-action="cut"]').disabled=!canEdit||!hasSelection;
+ madarEditMenu.querySelector('[data-edit-action="copy"]').disabled=!hasSelection;
+ madarEditMenu.querySelector('[data-edit-action="paste"]').disabled=!canEdit;
+ const alreadyAll=target instanceof HTMLInputElement||target instanceof HTMLTextAreaElement
+  ?(typeof target.selectionStart==='number'&&target.selectionStart===0&&target.selectionEnd===target.value.length)
+  :false;
+ madarEditMenu.querySelector('[data-edit-action="selectAll"]').disabled=alreadyAll;
+ madarEditMenu.hidden=false;
+ const rect=madarEditMenu.getBoundingClientRect();
+ const x=Math.max(4,Math.min(event.clientX,window.innerWidth-rect.width-4));
+ const y=Math.max(4,Math.min(event.clientY,window.innerHeight-rect.height-4));
+ madarEditMenu.style.left=x+'px';madarEditMenu.style.top=y+'px';
+}
+function normalizePastedText(target,text){
+ if(['barcode','editBarcode','alternateBarcodeValue','invoiceBarcodeScan'].includes(target.id))return text.replace(/[\u0000-\u001F\u007F]/g,'').trim();
+ if(target instanceof HTMLInputElement)return text.replace(/[\r\n]+/g,' ');
+ return text;
+}
+function dispatchEditedInput(target,inputType,data){
+ try{target.dispatchEvent(new InputEvent('input',{bubbles:true,inputType,data}));}
+ catch(_){target.dispatchEvent(new Event('input',{bubbles:true}));}
+}
+async function readMadarClipboard(){
+ if(!invoke)return '';
+ try{const text=await invoke('clipboard_read_text');return typeof text==='string'?text:'';}
+ catch(error){console.warn('[Madar] Clipboard text unavailable:',error);return '';}
+}
+async function writeMadarClipboard(text){
+ if(!invoke)return false;
+ try{await invoke('clipboard_write_text',{text:String(text)});return true;}
+ catch(error){console.warn('[Madar] Clipboard write failed:',error);return false;}
+}
+async function pasteIntoMadarTarget(target){
+ if(!isEditableTarget(target))return;
+ const raw=await readMadarClipboard();if(!raw)return;
+ const text=normalizePastedText(target,raw);
+ if(target instanceof HTMLInputElement||target instanceof HTMLTextAreaElement){
+  const start=typeof target.selectionStart==='number'?target.selectionStart:target.value.length;
+  const end=typeof target.selectionEnd==='number'?target.selectionEnd:target.value.length;
+  const max=Number.isFinite(target.maxLength)&&target.maxLength>=0?target.maxLength:Infinity;
+  const remaining=max-(target.value.length-(end-start));
+  const inserted=text.slice(0,Math.max(0,remaining));
+  target.value=target.value.slice(0,start)+inserted+target.value.slice(end);
+  const caret=start+inserted.length;
+  try{target.setSelectionRange(caret,caret);}catch(_){}
+  dispatchEditedInput(target,'insertFromPaste',inserted);
+  return;
+ }
+ if(target.isContentEditable){
+  target.focus();const sel=window.getSelection();
+  if(sel&&sel.rangeCount){const range=sel.getRangeAt(0);if(target.contains(range.commonAncestorContainer)||range.commonAncestorContainer===target){range.deleteContents();const node=document.createTextNode(text);range.insertNode(node);range.setStartAfter(node);range.collapse(true);sel.removeAllRanges();sel.addRange(range);dispatchEditedInput(target,'insertFromPaste',text);}}
+ }
+}
+async function copyOrCutMadarTarget(target,cut){
+ const selected=selectedTextForTarget(target);if(!selected)return;
+ if(!await writeMadarClipboard(selected))return;
+ if(!cut||!isEditableTarget(target))return;
+ if(target instanceof HTMLInputElement||target instanceof HTMLTextAreaElement){
+  const start=target.selectionStart,end=target.selectionEnd;
+  if(typeof start!=='number'||typeof end!=='number')return;
+  target.value=target.value.slice(0,start)+target.value.slice(end);try{target.setSelectionRange(start,start);}catch(_){}dispatchEditedInput(target,'deleteByCut',null);
+ }else if(target.isContentEditable){const sel=window.getSelection();if(sel&&sel.rangeCount){sel.deleteFromDocument();dispatchEditedInput(target,'deleteByCut',null);}}
+}
+window.addEventListener('contextmenu',function(event){
+ const target=getTextEditTarget(event.target);
+ event.preventDefault();event.stopPropagation();
+ if(target)showMadarEditMenu(event,target);else hideMadarEditMenu();
+},{capture:true});
+// Prevent WebKit's native Ctrl/Command+V/C/X handlers before they query GTK clipboard formats.
+document.addEventListener('keydown',function(event){
+ const target=getTextEditTarget(event.target);
+ if(event.key==='Escape'&&!madarEditMenu.hidden){hideMadarEditMenu();return;}
+ if(!target)return;
+ const key=event.key.toLowerCase(),mod=event.ctrlKey||event.metaKey;
+ let action=null;
+ if(mod&&key==='v')action='paste';else if(mod&&key==='c')action='copy';else if(mod&&key==='x')action='cut';else if(event.shiftKey&&event.key==='Insert')action='paste';else if(event.ctrlKey&&event.key==='Insert')action='copy';
+ if(!action)return;
+ event.preventDefault();event.stopImmediatePropagation();hideMadarEditMenu();
+ if(action==='paste')void pasteIntoMadarTarget(target);else void copyOrCutMadarTarget(target,action==='cut');
+},{capture:true});
+// All field-menu actions use the Rust clipboard bridge instead of browser-native clipboard access.
+madarEditMenu.addEventListener('mousedown',event=>event.preventDefault());
+madarEditMenu.addEventListener('click',event=>{
+ const button=event.target.closest('[data-edit-action]');if(!button||!madarEditTarget)return;
+ const target=madarEditTarget,action=button.dataset.editAction;hideMadarEditMenu();target.focus();
+ if(action==='paste')void pasteIntoMadarTarget(target);
+ else if(action==='copy')void copyOrCutMadarTarget(target,false);
+ else if(action==='cut')void copyOrCutMadarTarget(target,true);
+ else if(action==='selectAll'){
+  if(target instanceof HTMLInputElement||target instanceof HTMLTextAreaElement){try{target.select();}catch(_){}}
+  else if(target.isContentEditable){const range=document.createRange();range.selectNodeContents(target);const sel=window.getSelection();sel?.removeAllRanges();sel?.addRange(range);}
+ }
+});
+document.addEventListener('pointerdown',event=>{if(!madarEditMenu.hidden&&!madarEditMenu.contains(event.target))hideMadarEditMenu();},true);
+document.addEventListener('focusin',event=>{if(!madarEditMenu.hidden&&!madarEditMenu.contains(event.target)&&event.target!==madarEditTarget)hideMadarEditMenu();},true);
+window.addEventListener('blur',hideMadarEditMenu);window.addEventListener('resize',hideMadarEditMenu);document.addEventListener('scroll',hideMadarEditMenu,true);
 // Navigation: show one section at a time without reloading the app.
 function showPage(page){const required={'products':'products.view','stock':'stock.view','users':'users.view','audit':'audit.view','purchaseInvoices':'purchases.view','salesInvoices':'sales.view','quotations':'quotations.view','finance':'finance.view','reports':'reports.view'}[page];const backupPermissions=['backup.view_points','backup.create','backup.restore','backup.points.delete'];const allowed=page==='companySettings'?(!!currentUser&&['company.settings.view','company.settings.manage'].some(p=>currentUser.permissions.includes(p))):page==='backup'?(!!currentUser&&backupPermissions.some(p=>currentUser.permissions.includes(p))):page==='parties'?(!!currentUser&&['customers.view','suppliers.view'].some(p=>currentUser.permissions.includes(p))):(!required||(!!currentUser&&currentUser.permissions.includes(required)));if(!allowed){statusEl.textContent=currentLanguage==='en'?'You do not have permission to open this section.':'ليس لديك صلاحية لفتح هذا القسم.';return;}document.querySelectorAll('[data-page-content]').forEach(el=>{el.hidden=el.dataset.pageContent!==page;});document.querySelectorAll('.nav-btn').forEach(el=>{const active=el.dataset.page===page;el.classList.toggle('active',active);if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});if(page==='products')setTimeout(()=>document.getElementById('productSearch')?.focus(),0);if(page==='stock')refreshStock(undefined,true);if(page==='parties')loadParties();if(page==='purchaseInvoices')loadInvoices('purchase');if(page==='salesInvoices')loadInvoices('sale');if(page==='quotations')loadQuotations();if(page==='finance')loadFinance();if(page==='reports')refreshReports();if(page==='companySettings')loadCompanyProfile();if(page==='dashboard')refreshDashboard();}
 document.querySelectorAll('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>showPage(btn.dataset.page)));
@@ -559,23 +697,8 @@ document.getElementById('alternateBarcodeForm').addEventListener('submit',async 
 });
 document.getElementById('cancelProductEdit').addEventListener('click',()=>document.getElementById('editProductOverlay').hidden=true);
 document.getElementById('editProductForm').addEventListener('submit',async e=>{e.preventDefault();const status=document.getElementById('editProductStatus');const button=document.getElementById('saveProductChanges');button.disabled=true;status.className='status';status.textContent=currentLanguage==='en'?'Saving changes…':'جارٍ حفظ التعديلات…';try{const p=await invoke('update_product',{id:Number(document.getElementById('editId').value),code:document.getElementById('editCode').value.trim(),name:document.getElementById('editName').value.trim(),unit:document.getElementById('editUnit').value.trim(),barcode:document.getElementById('editBarcode').value.trim(),purchasePriceMinor:Math.round(Number(document.getElementById('editPurchase').value)*100),salePriceMinor:Math.round(Number(document.getElementById('editSale').value)*100)});status.className='status status-success';status.textContent=currentLanguage==='en'?`Product “${p.name}” saved. Primary barcode: ${p.barcode}. Previous barcode retained as an alternate when changed.`:`تم تعديل «${p.name}». الباركود الأساسي الحالي: ${p.barcode}. تم الحفاظ على الباركود السابق إذا تم تغييره.`;await refreshProducts();setTimeout(()=>{document.getElementById('editProductOverlay').hidden=true;},900);}catch(err){status.className='status status-error';const raw=String(err?.message||err);status.textContent=(currentLanguage==='en'?'Could not save product: ':'فشل حفظ التعديلات: ')+(currentLanguage==='en'?localizeText(raw):raw);console.error('[Madar] update_product failed:',err);}finally{button.disabled=false;}});
-// Text paste is normally handled by WebKit. For barcode-only fields, remove control characters
-// commonly introduced by copied multi-line text or scanners; keep leading zeroes and all printable text.
-['barcode','editBarcode','alternateBarcodeValue','invoiceBarcodeScan'].forEach(id=>{
- const field=document.getElementById(id);if(!field)return;
- field.maxLength=128;
- field.addEventListener('paste',event=>{
-  try{
-   const text=event.clipboardData?.getData('text/plain');if(typeof text!=='string'||text.length===0)return;
-   const cleaned=text.replace(/[\u0000-\u001F\u007F]/g,'').trim();
-   event.preventDefault();
-   const start=field.selectionStart??field.value.length;const end=field.selectionEnd??field.value.length;
-   const next=(field.value.slice(0,start)+cleaned+field.value.slice(end)).slice(0,128);
-   field.value=next;field.setSelectionRange(Math.min(start+cleaned.length,128),Math.min(start+cleaned.length,128));
-   field.dispatchEvent(new Event('input',{bubbles:true}));
-  }catch(error){console.warn('[Madar] Barcode paste normalization skipped:',error);}
- });
-});
+// Clipboard paste is handled by the custom context menu and Rust clipboard bridge.
+['barcode','editBarcode','alternateBarcodeValue','invoiceBarcodeScan'].forEach(id=>{const field=document.getElementById(id);if(field)field.maxLength=128;});
 window.addEventListener('error',event=>{console.error('[Madar renderer error]',event.message,event.filename,event.lineno,event.error);});
 window.addEventListener('unhandledrejection',event=>{console.error('[Madar unhandled promise rejection]',event.reason);});
 document.getElementById('productSearch').addEventListener('input',e=>refreshProducts(e.target.value));
