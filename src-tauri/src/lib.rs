@@ -359,9 +359,10 @@ fn initialize_database(path: &PathBuf) -> Result<(), String> {
             account_id INTEGER NOT NULL REFERENCES gl_accounts(id), debit_minor INTEGER NOT NULL DEFAULT 0 CHECK(debit_minor>=0),
             credit_minor INTEGER NOT NULL DEFAULT 0 CHECK(credit_minor>=0), CHECK((debit_minor=0) != (credit_minor=0))
         );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_gl_journal_source_once ON gl_journals(source_type,source_id) WHERE source_type IS NOT NULL AND source_id IS NOT NULL;
         INSERT OR IGNORE INTO gl_accounts(code,name,account_type) VALUES
           ('1000','النقدية والخزنة','asset'),('1100','العملاء','asset'),('1200','المخزون','asset'),
-          ('2000','الموردون','liability'),('3000','رأس المال','equity'),('4000','إيرادات المبيعات','revenue'),('5000','تكلفة البضاعة المباعة','expense'),('6000','المصروفات التشغيلية','expense');"
+          ('1010','الحسابات البنكية','asset'),('1020','تحت التحصيل - بطاقات','asset'),('1030','وسائل دفع أخرى قيد التسوية','asset'),('1300','ضريبة قيمة مضافة مدخلات','asset'),('2000','الموردون','liability'),('2100','ضريبة قيمة مضافة مخرجات','liability'),('3000','رأس المال','equity'),('4000','إيرادات المبيعات','revenue'),('5000','تكلفة البضاعة المباعة','expense'),('6000','المصروفات التشغيلية','expense');"
     ).map_err(|e| e.to_string())?;
 
     if !table_has_column(&conn, "product_batches", "expiry_known")? {
@@ -1023,6 +1024,10 @@ fn record_payment(app:tauri::AppHandle,state:State<'_,AppState>,invoice_type:Str
         let description=format!("{} {}",if ctx.kind=="sale"{"تحصيل فاتورة بيع"}else{"سداد فاتورة شراء"},invoice_no);
         tx.execute("INSERT INTO cashbook_entries(direction,amount_minor,entry_date,source_type,source_id,description,notes,created_by,created_by_username) VALUES (?1,?2,?3,'payment',?4,?5,?6,?7,?8)",params![direction,amount_minor,payment_date.trim(),payment_id,description,notes,actor.id,actor.display_name]).map_err(|e|e.to_string())?;
     }
+    // Payment method determines the actual settlement account; receivable/payable is cleared separately.
+    let settlement_account=match method.as_str(){"cash"=>"1000","card"=>"1020","bank"|"transfer"=>"1010","other"=>"1030",_=>return Err("طريقة الدفع غير مدعومة".into())};
+    let journal_lines=if ctx.kind=="sale" { vec![(settlement_account,amount_minor,0),("1100",0,amount_minor)] } else { vec![("2000",amount_minor,0),(settlement_account,0,amount_minor)] };
+    post_automatic_journal(&tx,"payment",payment_id,payment_date.trim(),&format!("دفعة على الفاتورة {invoice_no} - {method}"),&journal_lines,Some(actor.id),Some(&actor.username))?;
     let party_name=if let Some(pid)=party_id{tx.query_row(&format!("SELECT name FROM {table} WHERE id=?1",table=ctx.party_table),[pid],|r|r.get::<_,String>(0)).optional().map_err(|e|e.to_string())?.unwrap_or_default()}else{"عميل نقدي".into()};
     write_audit(&tx,Some(&actor),"payment_recorded","payment",Some(&payment_id.to_string()),&format!("invoice_type={}; invoice_no={invoice_no}; party={party_name}; amount_minor={amount_minor}; method={method}; direction={direction}",ctx.kind))?;
     tx.commit().map_err(|e|e.to_string())?;
@@ -1301,8 +1306,31 @@ fn post_invoice(app: tauri::AppHandle, state: State<'_, AppState>, invoice_type:
         tx.execute("INSERT INTO stock_movements(product_id,warehouse_id,movement_type,quantity_milli,reference_type,reference_id,notes,unit) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",params![product_id,warehouse_id,ctx.kind,signed,if ctx.kind=="purchase" {"purchase_invoice"} else {"sale_invoice"},invoice_id,format!("{} — {}",invoice_no,if ctx.kind=="purchase" {"اعتماد فاتورة مشتريات"} else {"اعتماد فاتورة مبيعات"}),unit]).map_err(|e|e.to_string())?;
         write_audit(&tx,Some(&actor),if ctx.kind=="purchase" {"stock_in"} else {"stock_out"},"stock",Some(&product_id.to_string()),&format!("source=invoice; invoice_no={invoice_no}; code={code}; name={name}; quantity_milli={quantity}; unit={unit}"))?;
     }
+    // Post the invoice and inventory cost atomically with the stock movements.
+    let (invoice_date,invoice_total,invoice_subtotal,invoice_discount,invoice_tax,prices_include_tax):(String,i64,i64,i64,i64,i64)=tx.query_row(&format!("SELECT invoice_date,total_minor,subtotal_minor,discount_minor,tax_minor,prices_include_tax FROM {header} WHERE id=?1",header=ctx.header),[invoice_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).map_err(|e|e.to_string())?;
+    // Split tax from the taxable base so VAT is not posted as sales revenue/inventory.
+    let net_base=(invoice_subtotal-invoice_discount).max(0);
+    let taxable_base=if prices_include_tax!=0 { net_base.saturating_sub(invoice_tax) } else { net_base };
+    if ctx.kind=="purchase" {
+        let mut lines=vec![("1200",taxable_base,0),("1300",invoice_tax,0),("2000",0,invoice_total)];
+        lines.retain(|(_,d,c)|*d>0||*c>0);
+        post_automatic_journal(&tx,"purchase_invoice",invoice_id,&invoice_date,&format!("فاتورة مشتريات {invoice_no}"),&lines,Some(actor.id),Some(&actor.username))?;
+    } else {
+        let sale_cost:i64={
+            let mut q=tx.prepare("SELECT id,product_id,quantity_milli FROM sale_items WHERE sale_id=?1 ORDER BY id").map_err(|e|e.to_string())?;
+            let rows=q.query_map([invoice_id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?))).map_err(|e|e.to_string())?;
+            let items=rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?; drop(q);
+            let mut total=0i64;
+            for (item_id,pid,qty) in items { let unit_cost:i64=tx.query_row("SELECT purchase_price_minor FROM products WHERE id=?1",[pid],|r|r.get(0)).map_err(|e|e.to_string())?; let cost=((qty as i128)*(unit_cost as i128)/1000).clamp(0,i64::MAX as i128) as i64; tx.execute("UPDATE sale_items SET cost_price_minor=?1 WHERE id=?2",params![unit_cost,item_id]).map_err(|e|e.to_string())?; total=total.saturating_add(cost); }
+            total
+        };
+        let mut lines=vec![("1100",invoice_total,0),("4000",0,taxable_base),("2100",0,invoice_tax)];
+        lines.retain(|(_,d,c)|*d>0||*c>0);
+        post_automatic_journal(&tx,"sale_invoice",invoice_id,&invoice_date,&format!("فاتورة مبيعات {invoice_no}"),&lines,Some(actor.id),Some(&actor.username))?;
+        if sale_cost>0 { post_automatic_journal(&tx,"sale_cogs",invoice_id,&invoice_date,&format!("تكلفة بضاعة مباعة {invoice_no}"),&[("5000",sale_cost,0),("1200",0,sale_cost)],Some(actor.id),Some(&actor.username))?; }
+    }
     tx.execute(&format!("UPDATE {header} SET status='posted',posted_at=datetime('now'),updated_at=datetime('now') WHERE id=?1",header=ctx.header),[invoice_id]).map_err(|e|e.to_string())?;
-    write_audit(&tx,Some(&actor),if ctx.kind=="purchase" {"purchase_invoice_posted"} else {"sale_invoice_posted"},if ctx.kind=="purchase" {"purchase_invoice"} else {"sale_invoice"},Some(&invoice_id.to_string()),&format!("invoice_no={invoice_no}; stock updated atomically"))?;
+    write_audit(&tx,Some(&actor),if ctx.kind=="purchase" {"purchase_invoice_posted"} else {"sale_invoice_posted"},if ctx.kind=="purchase" {"purchase_invoice"} else {"sale_invoice"},Some(&invoice_id.to_string()),&format!("invoice_no={invoice_no}; stock and GL updated atomically"))?;
     tx.commit().map_err(|e|e.to_string())?;
     Ok(format!("تم اعتماد الفاتورة {invoice_no} وتحديث المخزون بنجاح"))
 }
@@ -1363,6 +1391,22 @@ include!("finance_commands.rs");
 include!("backup_commands.rs");
 include!("system_commands.rs");
 
+// Every automatic posting is idempotent by (source_type, source_id), and is inserted atomically.
+fn post_automatic_journal(conn: &Connection, source_type: &str, source_id: i64, entry_date: &str, description: &str, lines: &[(&str, i64, i64)], actor_id: Option<i64>, actor_name: Option<&str>) -> Result<(), String> {
+    if conn.query_row("SELECT EXISTS(SELECT 1 FROM gl_journals WHERE source_type=?1 AND source_id=?2)", params![source_type,source_id], |r| r.get::<_,i64>(0)).map_err(|e|e.to_string())? != 0 { return Ok(()); }
+    let debit: i128=lines.iter().map(|x|x.1 as i128).sum();
+    let credit: i128=lines.iter().map(|x|x.2 as i128).sum();
+    if debit<=0 || debit!=credit || lines.iter().any(|x|x.1<0 || x.2<0 || ((x.1==0)==(x.2==0))) { return Err(format!("القيد الآلي غير متوازن للمصدر {source_type}:{source_id}")); }
+    let no=format!("AUTO-{source_type}-{source_id}");
+    conn.execute("INSERT INTO gl_journals(entry_no,entry_date,description,source_type,source_id,posted,created_by,created_by_username) VALUES(?1,?2,?3,?4,?5,1,?6,?7)",params![no,entry_date,description,source_type,source_id,actor_id,actor_name]).map_err(|e|e.to_string())?;
+    let jid=conn.last_insert_rowid();
+    for (code,d,c) in lines {
+        let aid:i64=conn.query_row("SELECT id FROM gl_accounts WHERE code=?1 AND is_active=1",[code],|r|r.get(0)).map_err(|e|format!("الحساب المحاسبي {code} غير موجود: {e}"))?;
+        conn.execute("INSERT INTO gl_journal_lines(journal_id,account_id,debit_minor,credit_minor) VALUES(?1,?2,?3,?4)",params![jid,aid,d,c]).map_err(|e|e.to_string())?;
+    }
+    Ok(())
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase")]
 struct ReturnLineInput { source_item_id:i64, quantity_milli:i64 }
@@ -1381,26 +1425,53 @@ fn create_return(app:tauri::AppHandle,state:State<'_,AppState>,invoice_type:Stri
  let path=database_path(&app)?;initialize_database(&path)?;let mut c=connect(&path)?;let tx=c.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|e.to_string())?;
  let date:Option<String>=tx.query_row("SELECT date(?1)",[return_date.as_str()],|r|r.get(0)).map_err(|e|e.to_string())?;if date.as_deref()!=Some(return_date.as_str()){return Err("تاريخ المرتجع غير صالح".into());}
  let (header,lines,fk,ret_header,ret_lines,ret_fk,kind)=if ctx.kind=="sale"{("sales","sale_items","sale_id","sales_returns","sales_return_items","sale_item_id","sale_return")}else{("purchase_invoices","purchase_invoice_items","purchase_invoice_id","purchase_returns","purchase_return_items","purchase_item_id","purchase_return")};
- let (status,invoice_subtotal,invoice_total):(String,i64,i64)=tx.query_row(&format!("SELECT status,subtotal_minor,total_minor FROM {header} WHERE id=?1"),[invoice_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e|e.to_string())?.ok_or("الفاتورة الأصلية غير موجودة")?;if status!="posted"{return Err("لا يمكن عمل مرتجع إلا لفاتورة معتمدة".into());}
+ let (status,invoice_subtotal,invoice_total,invoice_tax):(String,i64,i64,i64)=tx.query_row(&format!("SELECT status,subtotal_minor,total_minor,tax_minor FROM {header} WHERE id=?1"),[invoice_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|e|e.to_string())?.ok_or("الفاتورة الأصلية غير موجودة")?;if status!="posted"{return Err("لا يمكن عمل مرتجع إلا لفاتورة معتمدة".into());}
  let no=format!("RET-{}-{}",if ctx.kind=="sale"{"S"}else{"P"},SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos());
  let return_source_col=if ctx.kind=="sale" {"sale_id"} else {"purchase_invoice_id"};
  let insert= format!("INSERT INTO {ret_header}(return_no,{return_source_col},return_date,total_minor,notes,created_by,created_by_username) VALUES(?1,?2,?3,0,?4,?5,?6)");
  tx.execute(&insert,params![no,invoice_id,return_date,notes,actor.id,actor.username]).map_err(|e|e.to_string())?;let rid=tx.last_insert_rowid();let mut total=0i64;
  for item in &items {
-  let (product_id,unit_price,original_qty):(i64,i64,i64)=tx.query_row(&format!("SELECT product_id,CASE WHEN quantity_milli>0 THEN (line_total_minor*1000)/quantity_milli ELSE unit_price_minor END,quantity_milli FROM {lines} WHERE id=?1 AND {fk}=?2"),params![item.source_item_id,invoice_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e|e.to_string())?.ok_or("أحد الأصناف لا يتبع الفاتورة المحددة")?;
+  let (product_id,source_line_total,unit_price,original_qty):(i64,i64,i64,i64)=tx.query_row(&format!("SELECT product_id,line_total_minor,unit_price_minor,quantity_milli FROM {lines} WHERE id=?1 AND {fk}=?2"),params![item.source_item_id,invoice_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|e|e.to_string())?.ok_or("أحد الأصناف لا يتبع الفاتورة المحددة")?;
   let returned:i64=tx.query_row(&format!("SELECT COALESCE(SUM(quantity_milli),0) FROM {ret_lines} WHERE {ret_fk}=?1"),[item.source_item_id],|r|r.get(0)).map_err(|e|e.to_string())?;
   if item.quantity_milli>original_qty-returned{return Err("كمية المرتجع أكبر من الكمية المتبقية من الفاتورة الأصلية".into());}
-  let line_total=((item.quantity_milli as i128)*(unit_price as i128)/1000) as i64;total=total.saturating_add(line_total);
+  // Pro-rate the persisted source line total by returned quantity, rounding half-up once.
+  // This avoids double truncation from deriving a unit price and multiplying it back.
+  let line_total=if original_qty>0 { (((source_line_total as i128)*(item.quantity_milli as i128)+(original_qty as i128/2))/(original_qty as i128)).clamp(0,i64::MAX as i128) as i64 } else { 0 };
+  total=total.checked_add(line_total).ok_or("إجمالي المرتجع أكبر من الحد المسموح")?;
   tx.execute(&format!("INSERT INTO {ret_lines}(return_id,{ret_fk},product_id,quantity_milli,unit_price_minor,line_total_minor) VALUES(?1,?2,?3,?4,?5,?6)"),params![rid,item.source_item_id,product_id,item.quantity_milli,unit_price,line_total]).map_err(|e|e.to_string())?;
   let warehouse:i64=tx.query_row("SELECT id FROM warehouses WHERE code='MAIN' LIMIT 1",[],|r|r.get(0)).map_err(|e|e.to_string())?;
   let signed=if ctx.kind=="sale"{item.quantity_milli}else{-item.quantity_milli};
-  if ctx.kind=="purchase" {let stock:i64=tx.query_row("SELECT COALESCE(SUM(quantity_milli),0) FROM stock_movements WHERE product_id=?1 AND warehouse_id=?2",params![product_id,warehouse],|r|r.get(0)).map_err(|e|e.to_string())?;if stock<item.quantity_milli{return Err("لا يمكن إرجاع كمية مشتريات أكبر من الرصيد المتاح بالمخزن الرئيسي".into());}}
+  if ctx.kind=="purchase" {
+   let stock:i64=tx.query_row("SELECT COALESCE(SUM(quantity_milli),0) FROM stock_movements WHERE product_id=?1 AND warehouse_id=?2",params![product_id,warehouse],|r|r.get(0)).map_err(|e|e.to_string())?;
+   if stock<item.quantity_milli{return Err("لا يمكن إرجاع كمية مشتريات أكبر من الرصيد المتاح بالمخزن الرئيسي".into());}
+   // Keep tracked batch balances aligned with the stock movement; unbatched legacy stock may remain.
+   let batches={let mut st=tx.prepare("SELECT id,remaining_milli FROM product_batches WHERE product_id=?1 AND warehouse_id=?2 AND remaining_milli>0 ORDER BY expiry_date,received_date,id").map_err(|e|e.to_string())?;let rows=st.query_map(params![product_id,warehouse],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?))).map_err(|e|e.to_string())?;rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?};
+   let mut left=item.quantity_milli;for (bid,available) in batches {if left<=0{break;}let take=left.min(available);tx.execute("UPDATE product_batches SET remaining_milli=remaining_milli-?1 WHERE id=?2",params![take,bid]).map_err(|e|e.to_string())?;left-=take;}
+  }
   let unit:String=tx.query_row("SELECT unit FROM products WHERE id=?1",[product_id],|r|r.get(0)).map_err(|e|e.to_string())?;
   tx.execute("INSERT INTO stock_movements(product_id,warehouse_id,movement_type,quantity_milli,reference_type,reference_id,notes,unit) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![product_id,warehouse,kind,signed,ret_header,rid,format!("مرتجع مرتبط بالفاتورة {}",invoice_id),unit]).map_err(|e|e.to_string())?;
+  if ctx.kind=="sale" {
+   let batch_no=format!("{}-{}",no,product_id);
+   tx.execute("INSERT INTO product_batches(product_id,warehouse_id,batch_no,received_date,expiry_date,expiry_known,quantity_milli,remaining_milli,source_invoice_id,notes) VALUES(?1,?2,?3,?4,'9999-12-31',0,?5,?5,NULL,'مرتجع مبيعات؛ تاريخ الصلاحية/التشغيلة الأصلية غير متاح')",params![product_id,warehouse,batch_no,return_date,item.quantity_milli]).map_err(|e|e.to_string())?;
+  }
  }
  // Allocate invoice-level discount/tax proportionally to the returned net line value.
  let adjusted_total=if invoice_subtotal>0 { ((total as i128)*(invoice_total as i128)/(invoice_subtotal as i128)).clamp(0,i64::MAX as i128) as i64 } else { 0 };
  tx.execute(&format!("UPDATE {ret_header} SET total_minor=?1 WHERE id=?2"),params![adjusted_total,rid]).map_err(|e|e.to_string())?;
+ let (ret_date,party_id):(String,Option<i64>)=tx.query_row(&format!("SELECT return_date,{party_col} FROM {header} WHERE id=?1",header=header,party_col=if ctx.kind=="sale"{"customer_id"}else{"supplier_id"}),[invoice_id],|r|Ok((r.get(0)?,r.get(1)?))).map_err(|e|e.to_string())?;
+ let return_tax=if invoice_total>0 { ((adjusted_total as i128)*(invoice_tax as i128)/(invoice_total as i128)).clamp(0,adjusted_total as i128) as i64 } else { 0 };
+ let return_net=adjusted_total.saturating_sub(return_tax);
+ if ctx.kind=="sale" {
+   let mut journal_lines=vec![("4000",return_net,0),("2100",return_tax,0),("1100",0,adjusted_total)];
+   journal_lines.retain(|(_,d,c)|*d>0||*c>0);
+   post_automatic_journal(&tx,"sales_return",rid,&ret_date,&format!("مرتجع مبيعات {no}"),&journal_lines,Some(actor.id),Some(&actor.username))?;
+   let mut cost=0i64;for item in &items {let c:Option<i64>=tx.query_row("SELECT cost_price_minor FROM sale_items WHERE id=?1",[item.source_item_id],|r|r.get(0)).optional().map_err(|e|e.to_string())?;cost=cost.saturating_add(((item.quantity_milli as i128)*(c.unwrap_or(0) as i128)/1000).clamp(0,i64::MAX as i128) as i64);}
+   if cost>0 {post_automatic_journal(&tx,"sales_return_cogs",rid,&ret_date,&format!("عكس تكلفة مرتجع المبيعات {no}"),&[("1200",cost,0),("5000",0,cost)],Some(actor.id),Some(&actor.username))?;}
+ } else {
+   let mut journal_lines=vec![("2000",adjusted_total,0),("1200",0,return_net),("1300",0,return_tax)];
+   journal_lines.retain(|(_,d,c)|*d>0||*c>0);
+   post_automatic_journal(&tx,"purchase_return",rid,&ret_date,&format!("مرتجع مشتريات {no}"),&journal_lines,Some(actor.id),Some(&actor.username))?;
+ }
  write_audit(&tx,Some(&actor),"create",ret_header,Some(&rid.to_string()),&format!("{} — الفاتورة {} — الإجمالي {}",no,invoice_id,adjusted_total))?;tx.commit().map_err(|e|e.to_string())?;Ok(serde_json::json!({"id":rid,"returnNo":no,"totalMinor":adjusted_total}))
 }
 
