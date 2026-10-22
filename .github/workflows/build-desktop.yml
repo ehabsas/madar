@@ -1,3 +1,4 @@
+```yaml
 name: Build desktop installers
 
 on:
@@ -15,11 +16,15 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
+
       - name: Install Tauri CLI
         run: cargo install tauri-cli --locked
+
       - name: Build installers
         run: cargo tauri build --bundles msi,nsis
+
       - uses: actions/upload-artifact@v4
         with:
           name: madar-windows-x64
@@ -32,11 +37,15 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
+
       - name: Install Tauri CLI
         run: cargo install tauri-cli --locked
+
       - name: Build app and DMG
         run: cargo tauri build --bundles app,dmg
+
       - uses: actions/upload-artifact@v4
         with:
           name: madar-macos
@@ -49,7 +58,9 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
+
       - name: Install Tauri Linux dependencies
         run: |
           sudo apt-get update
@@ -57,17 +68,20 @@ jobs:
             libwebkit2gtk-4.1-dev build-essential curl wget file \
             libxdo-dev libssl-dev libayatana-appindicator3-dev \
             librsvg2-dev patchelf libfuse2
+
       - name: Install Tauri CLI
         run: cargo install tauri-cli --locked
+
       - name: Build packages
         run: cargo tauri build --bundles deb,appimage
+
       - uses: actions/upload-artifact@v4
         with:
           name: madar-ubuntu-22.04-x64
           path: src-tauri/target/release/bundle/**
           if-no-files-found: error
           retention-days: 14
-  
+
   fedora:
     name: Fedora RPM
     runs-on: ubuntu-latest
@@ -77,8 +91,11 @@ jobs:
       - name: Install Git and Node.js for GitHub Actions
         run: |
           dnf install -y git nodejs curl
+
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
+
       - name: Install Fedora build dependencies
         run: |
           dnf install -y \
@@ -87,10 +104,13 @@ jobs:
             webkit2gtk4.1-devel gtk3-devel \
             libappindicator-gtk3-devel librsvg2-devel \
             patchelf rpm-build
+
       - name: Install Tauri CLI
         run: cargo install tauri-cli --locked
+
       - name: Build RPM package
         run: cargo tauri build --bundles rpm
+
       - uses: actions/upload-artifact@v4
         with:
           name: madar-fedora-rpm-x86_64
@@ -108,27 +128,76 @@ jobs:
         run: |
           pacman -Syu --noconfirm
           pacman -S --needed --noconfirm git nodejs
+
       - uses: actions/checkout@v4
+
       - name: Install Arch build dependencies
         run: |
           pacman -S --needed --noconfirm \
             webkit2gtk-4.1 gtk3 openssl libappindicator-gtk3 \
             librsvg pkgconf curl wget file
+
       - name: Create unprivileged build user and install Rust
         run: |
           useradd --create-home --shell /bin/bash builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
           runuser -u builder -- env HOME=/home/builder \
             bash -lc 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal'
+
       - name: Build Arch package
         run: |
           runuser -u builder -- env \
             HOME=/home/builder \
             PATH=/home/builder/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin \
             bash scripts/build-arch.sh
+
       - uses: actions/upload-artifact@v4
         with:
           name: madar-arch-x86_64
           path: src-tauri/target/release/bundle/arch/*.pkg.tar.*
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+
+    needs:
+      - windows
+      - macos
+      - ubuntu
+      - fedora
+      - arch
+
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: madar-*
+          path: release-assets
+
+      - name: List downloaded files
+        run: find release-assets -type f -print
+
+      - name: Publish installers to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Madar ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+          overwrite_files: true
+          files: |
+            release-assets/**/*.msi
+            release-assets/**/*.exe
+            release-assets/**/*.dmg
+            release-assets/**/*.deb
+            release-assets/**/*.AppImage
+            release-assets/**/*.rpm
+            release-assets/**/*.pkg.tar.*
+```
