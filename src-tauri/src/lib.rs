@@ -4,7 +4,7 @@ use argon2::{
 };
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf, sync::Mutex, time::{SystemTime, UNIX_EPOCH}};
+use std::{fs, path::PathBuf, sync::{Mutex, mpsc::{self, Receiver, Sender}}, thread, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{Manager, State};
 
 fn database_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -450,6 +450,66 @@ struct UserSession {
 
 #[derive(Default)]
 struct AppState { session: Mutex<Option<UserSession>> }
+enum ClipboardRequest {
+    ReadText(Sender<Result<String, String>>),
+    WriteText(String, Sender<Result<(), String>>),
+}
+
+struct ClipboardWorkerState { sender: Sender<ClipboardRequest> }
+
+fn start_clipboard_worker() -> Result<Sender<ClipboardRequest>, String> {
+    let (sender, receiver): (Sender<ClipboardRequest>, Receiver<ClipboardRequest>) = mpsc::channel();
+    thread::Builder::new().name("madar-clipboard".to_string()).spawn(move || {
+        // Keep one clipboard instance alive because X11/Wayland clipboard ownership may
+        // disappear if an instance is immediately dropped after writing.
+        let mut clipboard: Option<arboard::Clipboard> = None;
+        while let Ok(request) = receiver.recv() {
+            if clipboard.is_none() {
+                match arboard::Clipboard::new() {
+                    Ok(instance) => clipboard = Some(instance),
+                    Err(error) => {
+                        let message = format!("تعذر الوصول إلى حافظة النظام: {error}");
+                        match request {
+                            ClipboardRequest::ReadText(reply) => { let _ = reply.send(Err(message)); },
+                            ClipboardRequest::WriteText(_, reply) => { let _ = reply.send(Err(message)); },
+                        }
+                        continue;
+                    }
+                }
+            }
+            match request {
+                ClipboardRequest::ReadText(reply) => {
+                    // Empty/non-text clipboard is a normal state, not an application error.
+                    let result = match clipboard.as_mut().expect("clipboard initialized").get_text() {
+                        Ok(text) => Ok(text),
+                        Err(_) => Ok(String::new()),
+                    };
+                    let _ = reply.send(result);
+                }
+                ClipboardRequest::WriteText(text, reply) => {
+                    let result = clipboard.as_mut().expect("clipboard initialized").set_text(text)
+                        .map_err(|error| format!("تعذر الكتابة إلى حافظة النظام: {error}"));
+                    let _ = reply.send(result);
+                }
+            }
+        }
+    }).map_err(|error| format!("تعذر بدء خدمة الحافظة: {error}"))?;
+    Ok(sender)
+}
+
+#[tauri::command]
+fn clipboard_read_text(state: State<'_, ClipboardWorkerState>) -> Result<String, String> {
+    let (reply_tx, reply_rx) = mpsc::channel();
+    state.sender.send(ClipboardRequest::ReadText(reply_tx)).map_err(|_| "خدمة الحافظة غير متاحة".to_string())?;
+    match reply_rx.recv() { Ok(result) => result, Err(_) => Err("خدمة الحافظة لم تستجب".to_string()) }
+}
+
+#[tauri::command]
+fn clipboard_write_text(text: String, state: State<'_, ClipboardWorkerState>) -> Result<(), String> {
+    let (reply_tx, reply_rx) = mpsc::channel();
+    state.sender.send(ClipboardRequest::WriteText(text, reply_tx)).map_err(|_| "خدمة الحافظة غير متاحة".to_string())?;
+    match reply_rx.recv() { Ok(result) => result, Err(_) => Err("خدمة الحافظة لم تستجب".to_string()) }
+}
 
 fn require_permission(state: &AppState, permission: &str) -> Result<UserSession, String> {
     let guard = state.session.lock().map_err(|_| "تعذر الوصول إلى جلسة المستخدم")?;
@@ -2067,11 +2127,13 @@ pub fn run() {
         .manage(AppState::default())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            let clipboard_sender = start_clipboard_worker().map_err(std::io::Error::other)?;
+            app.manage(ClipboardWorkerState { sender: clipboard_sender });
             let path = database_path(&app.handle()).map_err(std::io::Error::other)?;
             initialize_database(&path).map_err(std::io::Error::other)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![app_info, auth_status, create_initial_admin, login, logout, list_users, create_user, update_user_profile, set_user_active, set_user_role, list_user_permissions, set_user_permissions, reset_user_password, change_own_password, list_audit_log, create_product, find_product_by_barcode, get_dashboard_inventory_counts, list_products, search_products, list_inactive_products, search_inactive_products, reactivate_product, update_product, add_alternate_barcode, deactivate_product, list_stock, list_stock_movements, record_stock_movement, list_parties, save_party, set_party_active, get_company_branding, get_company_profile, get_company_printing_profile, save_company_profile, list_payable_invoices, record_payment, list_payments, cashbox_adjustment, list_cashbook, get_financial_summary, list_quotations, get_quotation_details, save_quotation, set_quotation_status, convert_quotation_to_sale, list_invoices, get_invoice_details, create_invoice, update_invoice_draft, post_invoice, cancel_invoice, create_backup, list_restore_points, delete_restore_point, restore_backup])
+        .invoke_handler(tauri::generate_handler![clipboard_read_text, clipboard_write_text, app_info, auth_status, create_initial_admin, login, logout, list_users, create_user, update_user_profile, set_user_active, set_user_role, list_user_permissions, set_user_permissions, reset_user_password, change_own_password, list_audit_log, create_product, find_product_by_barcode, get_dashboard_inventory_counts, list_products, search_products, list_inactive_products, search_inactive_products, reactivate_product, update_product, add_alternate_barcode, deactivate_product, list_stock, list_stock_movements, record_stock_movement, list_parties, save_party, set_party_active, get_company_branding, get_company_profile, get_company_printing_profile, save_company_profile, list_payable_invoices, record_payment, list_payments, cashbox_adjustment, list_cashbook, get_financial_summary, list_quotations, get_quotation_details, save_quotation, set_quotation_status, convert_quotation_to_sale, list_invoices, get_invoice_details, create_invoice, update_invoice_draft, post_invoice, cancel_invoice, create_backup, list_restore_points, delete_restore_point, restore_backup])
         .run(tauri::generate_context!())
         .expect("خطأ أثناء تشغيل مدار");
 }
