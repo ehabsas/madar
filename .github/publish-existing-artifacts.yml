@@ -1,0 +1,96 @@
+name: Publish Existing Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Successful build Run ID from GitHub Actions"
+        required: true
+        type: string
+      tag_name:
+        description: "Release tag, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  release:
+    name: Publish Existing Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate build run
+        id: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+          TAG_NAME: ${{ inputs.tag_name }}
+        run: |
+          if [[ ! "$RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "Invalid Run ID"
+            exit 1
+          fi
+
+          if [[ ! "$TAG_NAME" =~ ^v[0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "Tag must start with v, for example v0.1.0"
+            exit 1
+          fi
+
+          RUN=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID")
+
+          if [[ "$(jq -r .status <<< "$RUN")" != "completed" ]] ||
+             [[ "$(jq -r .conclusion <<< "$RUN")" != "success" ]]; then
+            echo "The selected run did not complete successfully."
+            exit 1
+          fi
+
+          echo "head_sha=$(jq -r .head_sha <<< "$RUN")" >> "$GITHUB_OUTPUT"
+
+      - name: Download artifacts from selected run
+        uses: actions/download-artifact@v4
+        with:
+          pattern: madar-*
+          path: release-assets
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Check downloaded files
+        run: |
+          find release-assets -type f -print
+          if ! find release-assets -type f | grep -q .; then
+            echo "No artifacts were downloaded."
+            exit 1
+          fi
+
+      - name: Create tag if missing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ inputs.tag_name }}
+          HEAD_SHA: ${{ steps.build.outputs.head_sha }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG_NAME" >/dev/null 2>&1; then
+            echo "Tag already exists; keeping it."
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f "ref=refs/tags/$TAG_NAME" \
+              -f "sha=$HEAD_SHA"
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          name: Madar ${{ inputs.tag_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+          files: |
+            release-assets/**/*.msi
+            release-assets/**/*.exe
+            release-assets/**/*.dmg
+            release-assets/**/*.deb
+            release-assets/**/*.AppImage
+            release-assets/**/*.rpm
+            release-assets/**/*.pkg.tar.*
