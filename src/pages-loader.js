@@ -64,6 +64,10 @@
   window.loadMadarPage = async function loadMadarPage(name) {
     const page = await fetchPage(name);
     await loadPageAssets(name);
+    // Templates may carry `hidden` in their source to avoid flashing before
+    // authorization. Once selected, reveal the root; prepareMadarPage then
+    // reapplies permission visibility for protected page roots.
+    page.hidden = false;
     if (activePage !== name || host.firstElementChild !== page) {
       host.replaceChildren(page);
       activePage = name;

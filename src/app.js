@@ -729,13 +729,13 @@ function applyElementPermissions(){
  if(!currentUser)return;
  document.querySelectorAll('[data-permission]').forEach(el=>{
   const permitted=currentUser.permissions.includes(el.dataset.permission);
-  if(el.hasAttribute('data-page-content')){if(!permitted)el.hidden=true;return;}
+  if(el.hasAttribute('data-page-content')){el.hidden=!permitted;return;}
   el.hidden=!permitted;
  });
  document.querySelectorAll('[data-any-permission]').forEach(el=>{
   const required=el.dataset.anyPermission.split(/\s+/).filter(Boolean);
   const permitted=required.some(code=>currentUser.permissions.includes(code));
-  if(el.hasAttribute('data-page-content')){if(!permitted)el.hidden=true;return;}
+  if(el.hasAttribute('data-page-content')){el.hidden=!permitted;return;}
   el.hidden=!permitted;
  });
  applyPriceFieldPermissions();
